@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "X MARGIN",
+  "version": "0.1.47",
+  "description": "给 x.com 加动态背景、字体与外观：12 款原创着色器、图片背景、字体与字号、白色/黑色主题与强调色、去掉广告，以及推文一键截图。",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*",
+        "flux.js"
+      ],
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ]
+    }
+  ],
+  "permissions": [
+    "storage",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

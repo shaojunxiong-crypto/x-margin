@@ -1,0 +1,7 @@
+node_modules/
+dist/
+x-margin.zip
+.DS_Store
+
+# 本地验证用的浏览器 profile（含 cookie / 登录态）与截图，1.9GB，绝不入库
+.workbuddy/

@@ -90,7 +90,7 @@ const CSS = `
 .xm-sec-h span{font:600 10px/1 inherit;letter-spacing:.16em;text-transform:uppercase;color:var(--xm-ui-dim,#71767b);
   white-space:nowrap}
 .xm-sec-l{flex:1;height:1px;background:var(--xm-ui-line,rgba(255,255,255,.1));opacity:.8}
-.xm-card{border:1px solid var(--xm-ui-line,rgba(255,255,255,.1));border-radius:14px;overflow:hidden;
+.xm-pcard{border:1px solid var(--xm-ui-line,rgba(255,255,255,.1));border-radius:14px;overflow:hidden;
   background:var(--xm-ui-card,rgba(255,255,255,.04))}
 .xm-sw{display:flex;align-items:center;gap:10px;padding:9px 11px;cursor:pointer;user-select:none;
   transition:background .14s ease}
@@ -206,7 +206,7 @@ export function createPanel(opts: PanelOptions): PanelApi {
     const head = el('div', 'xm-sec-h');
     head.append(el('span', undefined, title), el('div', 'xm-sec-l'));
     if (action) head.append(action);
-    const card = el('div', 'xm-card');
+    const card = el('div', 'xm-pcard');
     box.append(head, card);
     body.append(box);
     return card;
@@ -347,6 +347,9 @@ export function createPanel(opts: PanelOptions): PanelApi {
     });
     sw(card, '隐藏发推入口', '顶部发推面板和发帖按钮一起收掉', s.layout.hideCompose, (v) => {
       void opts.update({ layout: { ...s.layout, hideCompose: v } }).then(render);
+    });
+    sw(card, '隐藏滚动条', '去掉窗口滚动条，弹窗内保留', s.layout.noScrollbar, (v) => {
+      void opts.update({ layout: { ...s.layout, noScrollbar: v } }).then(render);
     });
 
     card = section('推文流');

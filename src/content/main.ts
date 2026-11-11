@@ -39,7 +39,7 @@ function sync(): void {
   const bareCol = s.layout.floatCards || s.layout.cardFeed;
   applySkin(theme, on, s.bg.glass, s.softText, bareCol);
   applyFont(s.font.choice, s.font.custom, s.font.scale);
-  applyLayout(s.layout.hideSidebar, s.layout.feedWidth, s.layout.hideAds, s.layout.floatCards, s.layout.cardFeed);
+  applyLayout(s.layout.hideSidebar, s.layout.feedWidth, s.layout.hideAds, s.layout.floatCards, s.layout.cardFeed, s.layout.noScrollbar);
   // 每条推文的祖先链上的底板逐层戳透（X 的底板可能不在同一层，CSS 写不到那么深）
   clearFloatWrappers(s.layout.floatCards);
   // 推文独立成块：时间线那几层底板逐层戳透（吸顶栏是主栏的兄弟，不会被碰到）

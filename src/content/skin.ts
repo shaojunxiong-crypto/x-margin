@@ -301,6 +301,13 @@ html.xm-noads article[data-testid="tweet"]:has([data-testid="placementTracking"]
 html.xm-nocompose .xm-comp-hide{display:none!important}
 /* 左侧栏的发帖按钮：图标栏关掉时也要能藏（.xm-hide 那条规则挂在 html.xm-rail 下，够不着） */
 html.xm-hidecompose [data-testid="SideNav_NewTweet_Button"]{display:none!important}
+/* 隐藏页面滚动条：只碰根滚动容器（html / body），弹窗、私信、设置页内部的滚动条原样保留 ——
+   那些地方没有滚动条就完全看不出「还有内容」。
+   两条都得写：scrollbar-width 管 gutter 与新版 overlay 滚动条，::-webkit-scrollbar 管 Windows
+   的经典滚动条；只写前者，经典滚动条仍会被画出来（v0.1.48 实测）。 */
+html.xm-noscroll,html.xm-noscroll body{scrollbar-width:none!important;scrollbar-gutter:auto!important}
+html.xm-noscroll::-webkit-scrollbar,html.xm-noscroll body::-webkit-scrollbar{
+  width:0!important;height:0!important;display:none!important}
 `;
 
 /**
@@ -542,9 +549,10 @@ export function injectBase(): void {
 }
 
 /** 去掉 / 恢复右侧栏、推文流宽度、广告过滤、推文卡片（纯 class 开关，不记账、不改内联样式，随时可逆） */
-export function applyLayout(hideSidebar: boolean, feedWidth: FeedWidth = 600, hideAds = true, floatCards = true, cardFeed = true): void {
+export function applyLayout(hideSidebar: boolean, feedWidth: FeedWidth = 600, hideAds = true, floatCards = true, cardFeed = true, noScrollbar = true): void {
   const html = document.documentElement;
   html.classList.toggle('xm-noside', hideSidebar);
+  html.classList.toggle('xm-noscroll', noScrollbar);
   html.classList.toggle('xm-noads', hideAds);
   html.classList.toggle('xm-float', floatCards);
   html.classList.toggle('xm-card', cardFeed);

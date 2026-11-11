@@ -42,6 +42,8 @@ export interface Layout {
   floatCards: boolean;
   /** 每条推文独立成块：主栏不铺底板，推文之间留缝隙（clip-path 裁，不动 X 的定位） */
   cardFeed: boolean;
+  /** 隐藏页面（根滚动容器）的滚动条：只去掉绘制，滚轮 / 键盘 / 触控板照常；弹窗与列表内部的滚动条不动 */
+  noScrollbar: boolean;
 }
 
 export interface Settings {
@@ -64,7 +66,7 @@ export const SHADERS: ShaderId[] = ['aurora', 'silk', 'mesh', 'grain', 'ice', 'v
 export const DEFAULTS: Settings = {
   bg: { mode: 'off', shader: 'aurora', intensity: 0.85, pool: [], glass: 'mid' },
   font: { choice: 'x', custom: '', scale: 100 },
-  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, floatCards: false, cardFeed: true },
+  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, floatCards: false, cardFeed: true, noScrollbar: true },
   theme: 'auto',
   accent: '#1d9bf0',
   softText: true,
@@ -137,6 +139,8 @@ export function sanitize(raw: unknown): Settings {
       // 推文独立成块：效果尚未定稿，先常开；面板开关等主人确认视觉后再加。
       // 走 sanitize 强制 true，避免旧配置（没有这个字段）落到 false。
       cardFeed: true,
+      // 旧配置（没有这个字段）要落到 DEFAULTS（true），不能落 false —— 否则升级后滚动条又冒出来
+      noScrollbar: typeof l.noScrollbar === 'boolean' ? l.noScrollbar : DEFAULTS.layout.noScrollbar,
     },
     theme: r.theme === 'light' || r.theme === 'dark' ? r.theme : 'auto',
     accent: cleanHex(r.accent),

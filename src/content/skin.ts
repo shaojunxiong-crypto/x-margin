@@ -308,6 +308,15 @@ html.xm-hidecompose [data-testid="SideNav_NewTweet_Button"]{display:none!importa
 html.xm-noscroll,html.xm-noscroll body{scrollbar-width:none!important;scrollbar-gutter:auto!important}
 html.xm-noscroll::-webkit-scrollbar,html.xm-noscroll body::-webkit-scrollbar{
   width:0!important;height:0!important;display:none!important}
+/* 右下角浮动按钮（Grok / 私信气泡）：X 把两个按钮挂在 body 级的固定层里，压在时间线右下角，
+   与内容区重叠。图标栏里的同名导航项 testid 是 AppTabBar_*，这里只认 Drawer 容器，不会误伤。
+   属性值的 i 标志是必需的：X 不同版本一个写 DMDrawer、一个写 dmDrawer，写死大小写跨版本就失效。 */
+html.xm-nofloat [data-testid="DMDrawer" i],
+html.xm-nofloat [data-testid="GrokDrawer" i],
+html.xm-nofloat [data-testid="DMDrawerButton" i],
+html.xm-nofloat [data-testid="GrokDrawerButton" i]{display:none!important}
+/* 白名单落空时的兜底：由 markFloats() 按「语义 + 右下角位置」补打标记，CSS 只认自有 class */
+html.xm-nofloat .xm-float-hide{display:none!important}
 `;
 
 /**
@@ -548,11 +557,58 @@ export function injectBase(): void {
   (document.head ?? document.documentElement).append(s);
 }
 
+/** 右下角浮动按钮的 testid 白名单：与 LAYOUT_CSS 里那四条规则保持同一份，改一处要同步另一处 */
+const FLOAT_SEL_DM = '[data-testid="DMDrawer" i],[data-testid="DMDrawerButton" i]';
+const FLOAT_SEL_GROK = '[data-testid="GrokDrawer" i],[data-testid="GrokDrawerButton" i]';
+/** 白名单落空时按可见名认：X 给这两个按钮的 aria-label 就是 Messages / Grok。
+ *  中文界面下 X 会把 Messages 本地化成「私信 / 消息」，两种都得收 —— 只写英文等于只对英文界面生效。 */
+const FLOAT_LABEL = /^(messages|direct messages?|grok|私信|消息)$/i;
+/** 兜底扫描的上次时间（ms）：见 markFloats 里的 5 秒闸门。初值必须是「很久以前」——
+ *  用 0 会让页面加载后的前 5 秒全部被闸门挡掉，正是浮动层刚渲染出来的那段时间。 */
+let lastFloatScan = -1e9;
+
+/**
+ * 右下角浮动按钮（Grok / 私信气泡）的兜底标记。
+ *
+ * 主路径是 CSS 白名单（零成本、零误伤）；这个函数只在白名单一个都没命中时才扫 ——
+ * X 一旦给这两个按钮换 testid，白名单静默失效，用户看到的就是「开关拨了没反应」。
+ * 兜底判据必须两条同时成立：aria-label 命中语义、且盒子真落在视口右下角。
+ * 只看语义会误伤：左侧图标栏的私信导航项同名（靠 header 排除），Grok 侧栏里也有同名按钮（靠位置排除）。
+ */
+export function markFloats(on: boolean): void {
+  if (!on) {
+    const marked = document.querySelectorAll('.xm-float-hide');
+    if (marked.length) marked.forEach((n) => n.classList.remove('xm-float-hide'));
+    return;
+  }
+  // 白名单两个族都命中就不必扫。要求「都命中」而不是「命中一个」—— 只命中一个说明这版
+  // X 只给其中一个留了老 testid，另一个照样要兜底，否则会从「两个都藏」退化成「藏一个」。
+  if (document.querySelector(FLOAT_SEL_DM) && document.querySelector(FLOAT_SEL_GROK)) return;
+  // 白名单失效时这条兜底会被 1.5 秒一拍的心跳反复调用：5 秒才真扫一次，
+  // 满屏 aria-label 的 rect 读取虽然只强制一次布局，也不该每拍都做。
+  const now = performance.now();
+  if (now - lastFloatScan < 5000) return;
+  lastFloatScan = now;
+  const vw = innerWidth;
+  const vh = innerHeight;
+  // 候选必须含 div[role="button"]：X 有相当一部分「按钮」其实是 div + role，不是真 button
+  document.querySelectorAll<HTMLElement>('a[aria-label],button[aria-label],[role="button"][aria-label]').forEach((n) => {
+    const label = (n.getAttribute('aria-label') ?? '').trim();
+    if (!FLOAT_LABEL.test(label)) return;
+    if (n.closest('header[role="banner"]')) return;
+    const r = n.getBoundingClientRect();
+    if (r.width < 20 || r.height < 20) return;
+    if (r.right < vw * 0.75 || r.top < vh * 0.5) return;
+    n.classList.add('xm-float-hide');
+  });
+}
+
 /** 去掉 / 恢复右侧栏、推文流宽度、广告过滤、推文卡片（纯 class 开关，不记账、不改内联样式，随时可逆） */
-export function applyLayout(hideSidebar: boolean, feedWidth: FeedWidth = 600, hideAds = true, floatCards = true, cardFeed = true, noScrollbar = true): void {
+export function applyLayout(hideSidebar: boolean, feedWidth: FeedWidth = 600, hideAds = true, floatCards = true, cardFeed = true, noScrollbar = true, hideFloats = true): void {
   const html = document.documentElement;
   html.classList.toggle('xm-noside', hideSidebar);
   html.classList.toggle('xm-noscroll', noScrollbar);
+  html.classList.toggle('xm-nofloat', hideFloats);
   html.classList.toggle('xm-noads', hideAds);
   html.classList.toggle('xm-float', floatCards);
   html.classList.toggle('xm-card', cardFeed);

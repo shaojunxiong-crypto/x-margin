@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X MARGIN",
-  "version": "0.1.48",
+  "version": "0.1.49",
   "description": "给 x.com 加动态背景、字体与外观：12 款原创着色器、图片背景、字体与字号、白色/黑色主题与强调色、去掉广告，以及推文一键截图。",
   "content_scripts": [
     {

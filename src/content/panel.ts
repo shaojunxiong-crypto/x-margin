@@ -351,6 +351,9 @@ export function createPanel(opts: PanelOptions): PanelApi {
     sw(card, '隐藏滚动条', '去掉窗口滚动条，弹窗内保留', s.layout.noScrollbar, (v) => {
       void opts.update({ layout: { ...s.layout, noScrollbar: v } }).then(render);
     });
+    sw(card, '隐藏浮动按钮', '右下角 Grok 与私信气泡', s.layout.hideFloats, (v) => {
+      void opts.update({ layout: { ...s.layout, hideFloats: v } }).then(render);
+    });
 
     card = section('推文流');
     sw(card, '隐藏推广', '广告推文整条收起，不留空白', s.layout.hideAds, (v) => {

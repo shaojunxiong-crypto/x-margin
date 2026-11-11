@@ -3,7 +3,7 @@ import { initAnchor } from './anchor';
 import { injectFonts } from './fonts';
 import { createPanel, type PanelApi } from './panel';
 import { initShot } from './shot';
-import { applyAccent, applyFlat, applyFont, applyLayout, applyRail, applySkin, clearCardWrappers, clearFloatWrappers, detectTheme, injectBase, markComposer, railItems, reflowCards, widenInner, type Theme } from './skin';
+import { applyAccent, applyFlat, applyFont, applyLayout, applyRail, applySkin, clearCardWrappers, clearFloatWrappers, detectTheme, injectBase, markComposer, markFloats, railItems, reflowCards, widenInner, type Theme } from './skin';
 import { applyTheme, enforceTheme, onSystemThemeChange, reloadForTheme, resolveTheme } from './theme';
 import { loadSettings, onSettings, saveSettings, type Settings } from '../shared/settings';
 
@@ -39,7 +39,7 @@ function sync(): void {
   const bareCol = s.layout.floatCards || s.layout.cardFeed;
   applySkin(theme, on, s.bg.glass, s.softText, bareCol);
   applyFont(s.font.choice, s.font.custom, s.font.scale);
-  applyLayout(s.layout.hideSidebar, s.layout.feedWidth, s.layout.hideAds, s.layout.floatCards, s.layout.cardFeed, s.layout.noScrollbar);
+  applyLayout(s.layout.hideSidebar, s.layout.feedWidth, s.layout.hideAds, s.layout.floatCards, s.layout.cardFeed, s.layout.noScrollbar, s.layout.hideFloats);
   // 每条推文的祖先链上的底板逐层戳透（X 的底板可能不在同一层，CSS 写不到那么深）
   clearFloatWrappers(s.layout.floatCards);
   // 推文独立成块：时间线那几层底板逐层戳透（吸顶栏是主栏的兄弟，不会被碰到）
@@ -111,6 +111,8 @@ function watch(bindWide: () => void): void {
       if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
       // 切标签页 / 路由跳转会重建发推面板，幂等补一次（有标记就不动 DOM）
       if (settings.layout.hideCompose && !document.querySelector('.xm-comp-hide')) markComposer(true);
+      // 右下角浮动按钮：X 路由切换后会重建那个固定层，兜底标记跟着补（幂等，白名单命中时零成本）
+      if (settings.layout.hideFloats) markFloats(true);
       // X 重渲染 nav 时会把我们的齿轮按钮一起清掉，低频补挂回去（幂等）
       ui?.place(settings.layout.railNav);
     }

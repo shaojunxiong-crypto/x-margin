@@ -34,6 +34,7 @@ Chrome → `chrome://extensions` → 打开「开发者模式」→「加载已�
 | 布局 | 隐藏右侧栏 | 默认开；主栏在导航右侧的剩余区域里居中 |
 | 布局 | 图标导航栏 | 默认开；左侧导航压成 76px 宽的图标竖列，钉在窗口最左边 |
 | 布局 | 隐藏滚动条 | 默认开；只隐藏窗口（根滚动容器）那条，滚轮 / 键盘 / 触控板照常；弹窗、私信、设置页内部的滚动条保留 —— 那里没有滚动条就完全看不出「还有内容」 |
+| 布局 | 隐藏浮动按钮 | 默认开；右下角 Grok 与私信气泡两个固定层一起收起（压在时间线右下角，挡内容） |
 | 布局 | 隐藏发推入口 | 默认开；时间线顶部的发推面板 + 左侧栏发帖按钮一起收掉（不发推的人用不上；关掉即全部还原） |
 | 推文流 | 隐藏推广 | 默认开；带 `placementTracking` 的推广单元整条收起，不留空白 |
 | 推文流 | 去掉边框线条 | 常开；主栏左右两条 1px 竖线、推文之间的横向分割线、引用卡片的 16px 圆角与 1px 描边、内嵌图片与**外链卡 / 视频封面**的 16px 圆角，全部去掉。引用卡片与卡片的底色保留 |
@@ -432,6 +433,23 @@ html.xm-noscroll::-webkit-scrollbar,html.xm-noscroll body::-webkit-scrollbar{
 教训：**挂在 `<html>` 上的开关类名要和 UI 自己的类名彻底隔开**。面板样式是全局注入的普通 `<style>`，不会因为「它属于面板」就自动限定作用域。
 
 验证脚本 `.workbuddy/quark-scroll.mjs`：mock 里页面可滚 + 一个内层滚动容器（模拟弹窗）。启动时必须 `ignoreDefaultArgs:['--hide-scrollbars']` —— Playwright 默认带这个参数，滚动条宽度恒为 0，测了等于没测。断言：开启时根滚动条 `0px`、内层仍 `17px`、滚轮 `0 → 900`；关掉开关后根滚动条回到 `15px`、滚轮 `0 → 700`；内层滚动条全程不变。
+
+### 隐藏右下角浮动按钮：先认 testid，认不到再按位置兜底
+
+X 把 Grok 和私信两个按钮挂在 body 级的固定层里，压在时间线右下角。它们与左侧图标栏里的同名导航项长得一样，靠 `data-testid` 区分：导航项是 `AppTabBar_*`，浮动层是 `DMDrawer` / `GrokDrawer`。
+
+```css
+html.xm-nofloat [data-testid="DMDrawer" i],
+html.xm-nofloat [data-testid="GrokDrawer" i]{display:none!important}
+```
+
+`i` 标志不是可选的：X 不同版本一个写 `DMDrawer`、一个写 `dmDrawer`，写死大小写跨版本就静默失效。
+
+testid 是会改的，所以 `markFloats()` 留了一条兜底：白名单两个族**没有都命中**时才扫（5 秒一次），判据是「`aria-label` 命中语义」+「盒子真落在视口右下角」两条同时成立，命中就打 `.xm-float-hide`。只看语义会误伤 —— 图标栏的私信导航项同名（靠 `closest('header[role="banner"]')` 排除），Grok 侧栏里也有同名按钮（靠位置排除）。候选集必须含 `div[role="button"]`：X 有相当一部分「按钮」是 div + role，不是真 `<button>`。
+
+**实测踩到的坑：节流初值写成 `0`。** `performance.now() - 0 < 5000` 会把页面加载后的前 5 秒全部挡掉 —— 那恰好是浮动层刚渲染出来的时间，于是兜底一次都没跑，现象是「开关拨了没反应，但 A 页（testid 命中）明明是好的」。初值改负数才修好。
+
+验证脚本 `.workbuddy/quark-floats.mjs`：A 页用真实 testid，断言两个浮动层不可见、图标栏私信项仍可见；B 页把 testid 改成 `floatingDock`，断言右下按钮被兜底标记收掉、左上（Grok 侧栏）同名按钮不受影响；再点开关来回一次，确认可逆。
 
 ### 推文截图：像素从哪来
 

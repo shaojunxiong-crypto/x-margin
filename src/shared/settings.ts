@@ -44,6 +44,8 @@ export interface Layout {
   cardFeed: boolean;
   /** 隐藏页面（根滚动容器）的滚动条：只去掉绘制，滚轮 / 键盘 / 触控板照常；弹窗与列表内部的滚动条不动 */
   noScrollbar: boolean;
+  /** 隐藏右下角的浮动按钮（Grok / 私信气泡）：X 的固定层，压着时间线右下角 */
+  hideFloats: boolean;
 }
 
 export interface Settings {
@@ -66,7 +68,7 @@ export const SHADERS: ShaderId[] = ['aurora', 'silk', 'mesh', 'grain', 'ice', 'v
 export const DEFAULTS: Settings = {
   bg: { mode: 'off', shader: 'aurora', intensity: 0.85, pool: [], glass: 'mid' },
   font: { choice: 'x', custom: '', scale: 100 },
-  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, floatCards: false, cardFeed: true, noScrollbar: true },
+  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, floatCards: false, cardFeed: true, noScrollbar: true, hideFloats: true },
   theme: 'auto',
   accent: '#1d9bf0',
   softText: true,
@@ -141,6 +143,8 @@ export function sanitize(raw: unknown): Settings {
       cardFeed: true,
       // 旧配置（没有这个字段）要落到 DEFAULTS（true），不能落 false —— 否则升级后滚动条又冒出来
       noScrollbar: typeof l.noScrollbar === 'boolean' ? l.noScrollbar : DEFAULTS.layout.noScrollbar,
+      // 同上：旧配置没有这个字段时要落到 true，否则升级后那两个浮动按钮还在
+      hideFloats: typeof l.hideFloats === 'boolean' ? l.hideFloats : DEFAULTS.layout.hideFloats,
     },
     theme: r.theme === 'light' || r.theme === 'dark' ? r.theme : 'auto',
     accent: cleanHex(r.accent),

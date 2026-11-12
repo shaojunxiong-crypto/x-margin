@@ -104,6 +104,21 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-end{
   clip-path:inset(0 var(--xm-card-x,0px) var(--xm-card-gap,15px) var(--xm-card-x,0px))!important;
 }
+/* 组内每条推文的可视上下留白，统一成独立卡片裁完一刀后的同一数值（pad − gap = 4px）。
+   组首只裁上、组尾只裁下，所以被裁的那一侧补回 pad，未裁的一侧直接给净留白；
+   中间不裁，两侧都给净留白。这样每条推文都是「上 4、下 4」，不会出现首条上 4 下 19。 */
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-top article[data-testid="tweet"]{
+  padding-top:var(--xm-card-pad,19px)!important;
+  padding-bottom:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+}
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-mid article[data-testid="tweet"]{
+  padding-top:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+  padding-bottom:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+}
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-end article[data-testid="tweet"]{
+  padding-top:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+  padding-bottom:var(--xm-card-pad,19px)!important;
+}
 /* 组内补线：X 自己的线只画到 article 的内容区，被 --xm-card-pad 顶开成两截。
    按同一条横坐标补一条贯穿 cell 全高的线接上；clip-path 会顺带裁掉组首/组尾多出来的那截。 */
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-top::before,

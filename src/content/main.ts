@@ -1,7 +1,7 @@
 import { loadSettings, onSettings, saveSettings, type Settings } from '../shared/settings';
 import { initAnchor } from './anchor';
 import { BackgroundLayer } from './bg/background';
-import { applyFlat, clearCardWrappers, reflowCards, resetReflowBase, resetThreadSig } from './feed';
+import { applyFlat, clearCardWrappers, reflowCards, resetReflowBase, resetThreadSig, setFeedFrozen } from './feed';
 import { injectFonts } from './fonts';
 import { applyLayout, markComposer, markFloats, widenInner } from './layout';
 import { createPanel, type PanelApi } from './panel';
@@ -20,6 +20,13 @@ let bg: BackgroundLayer;
 let settings: Settings;
 let theme: Theme = 'dark';
 let ui: PanelApi | null = null;
+
+/**
+ * 滚动窗口：滚动中、以及停滚后 220ms 内，所有「全量扫描」类工作一律让路。
+ * 滚动时 X 的虚拟列表一直在摘/插 cell，按结构变动驱动扫描等于持续扫描。
+ */
+let scrollUntil = 0;
+const isScrolling = (): boolean => performance.now() < scrollUntil;
 
 function ready(): Promise<void> {
   if (document.body) return Promise.resolve();
@@ -82,8 +89,12 @@ async function seedRail(): Promise<void> {
  * X 改主题 / 重建节点都会冲掉我们刷过的东西。
  * 补扫改成事件驱动：只在主栏被换掉、或主栏内有结构变动时才跑，
  * 不再按秒全量重来 —— 逐条量几何是整轮最贵的一段，单条推文就上百个节点。
+ *
+ * ⛔ 但「有结构变动就跑」在滚动时等于持续跑：X 的虚拟列表一直在摘/插 cell，
+ * 频率比定时器高一个量级。所以滚动期间一律冻结全量扫描，只留 reflowCards
+ * （不跑就会叠住），停滚 220ms 后再补一次。
  */
-function watch(bindWide: () => void): void {
+function watch(bindWide: () => void, onUnfreeze: () => void): void {
   let lastThemeCheck = 0;
   let lastWideCheck = 0;
   let lastWideBind = 0;
@@ -91,15 +102,25 @@ function watch(bindWide: () => void): void {
   let reflowDue = false;
   let feedMo: MutationObserver | null = null;
   let moCol: HTMLElement | null = null;
+  let unfreezeT = 0;
+  let rafReflow = 0;
 
   const queueReflow = (): void => { reflowDue = true; };
+
+  /** 滚动中每帧最多一次重排 —— X 刚插入的 cell 用的是它自己的高度，慢了会叠住 */
+  const scheduleReflow = (): void => {
+    if (rafReflow) return;
+    rafReflow = requestAnimationFrame(() => {
+      rafReflow = 0;
+      if (settings.layout.cardFeed) reflowCards();
+    });
+  };
 
   /** 结构变动后的补扫，150ms 合并（X 会连着插好几条 cell） */
   const scan = (): void => {
     if (scanTimer) return;
     scanTimer = window.setTimeout(() => {
       scanTimer = 0;
-      clearCardWrappers(settings.layout.cardFeed);
       applyFlat(true);
       if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
       if (settings.layout.hideCompose && !document.querySelector('.xm-comp-hide')) markComposer(true);
@@ -118,10 +139,34 @@ function watch(bindWide: () => void): void {
     if (!col) return;
     resetThreadSig();
     resetReflowBase();
+    // 底板擦除只在换主栏时做一次：它要遍历每条 cell 的所有祖先、逐层读 position，
+    // 放进 scan() 就是每次结构变动都重来一遍（滚动时每 150ms 一次）
+    clearCardWrappers(settings.layout.cardFeed);
     feedMo = new MutationObserver(() => scan());
     feedMo.observe(col, { childList: true, subtree: true });
     scan();
   };
+
+  // 滚动 / 滚轮 / 触摸：冻结全量扫描，并持续把解冻时间往后推
+  const noteScroll = (): void => {
+    scrollUntil = performance.now() + 220;
+    setFeedFrozen(true);
+    clearTimeout(unfreezeT);
+    unfreezeT = window.setTimeout(() => {
+      unfreezeT = 0;
+      setFeedFrozen(false);
+      // 解冻只放开线程分组；其余补扫在滚动中是照常跑的，不必再补
+      onUnfreeze();
+    }, 220);
+  };
+  addEventListener('scroll', () => { noteScroll(); scheduleReflow(); }, { passive: true, capture: true });
+  addEventListener('wheel', noteScroll, { passive: true, capture: true });
+  addEventListener('touchmove', noteScroll, { passive: true, capture: true });
+  addEventListener('resize', () => {
+    resetThreadSig();
+    resetReflowBase();
+    scheduleReflow();
+  }, { passive: true });
 
   // 图片解码完 / 字体就绪都会改高度，重排要跟得上，否则下面几条会叠住
   document.addEventListener('load', (e) => {
@@ -202,18 +247,6 @@ async function boot(): Promise<void> {
     if (settings.theme === 'auto') applyTheme('auto');
   });
 
-  // 滚动 / 缩放时 X 会插入新 cell 并写死 translateY，rAF 合并后立刻重排
-  let rafReflow = 0;
-  const scheduleReflow = (): void => {
-    if (rafReflow) return;
-    rafReflow = requestAnimationFrame(() => {
-      rafReflow = 0;
-      if (settings.layout.cardFeed) reflowCards();
-    });
-  };
-  addEventListener('scroll', scheduleReflow, { passive: true, capture: true });
-  addEventListener('resize', () => { resetThreadSig(); scheduleReflow(); }, { passive: true });
-
   // ---- 加宽层补扫 ----
   // 主栏内部一重建，那几层 600px 的 max-width 就回来了；盯 childList 比定时轮询快得多。
   let wideTimer = 0;
@@ -222,6 +255,8 @@ async function boot(): Promise<void> {
   let wideMo: MutationObserver | null = null;
   const queueWide = (delay = 60): void => {
     if (settings.layout.feedWidth === 600) return;
+    // 滚动中不做：加宽标记打在祖先链上，新 cell 会继承，停滚后补一次就够
+    if (isScrolling()) return;
     const due = performance.now() + delay;
     if (wideTimer && wideDue <= due) return;
     clearTimeout(wideTimer);
@@ -249,15 +284,16 @@ async function boot(): Promise<void> {
 
   // X 在 hover 后会换掉图片 / 引用卡的包装层，且替换发生在事件之后，
   // 必须推迟一拍再扫，否则扫到的还是旧节点。
+  // ⛔ 只认 pointerover：滚动时鼠标停在页面上，pointermove 会不断触发全量扫描，
+  // 和 scan() 叠加成两路重活 —— 这正是「正常浏览反而更卡」的一半原因。
   let hoverTimer = 0;
   const queueFlat = (): void => {
     if (hoverTimer) return;
     hoverTimer = window.setTimeout(() => { hoverTimer = 0; applyFlat(true); }, 140);
   };
-  addEventListener('pointerover', queueFlat, { passive: true });
-  addEventListener('pointermove', queueFlat, { passive: true });
+  addEventListener('pointerover', () => { if (!isScrolling()) queueFlat(); }, { passive: true });
 
-  watch(bindWide);
+  watch(bindWide, () => queueWide(0));
   void seedRail();
 }
 

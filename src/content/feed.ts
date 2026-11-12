@@ -206,13 +206,34 @@ export function markNoise(): void {
 
 /** 线程扫描的限频时间戳（applyFlat 会被悬停、心跳反复调用） */
 let lastThreadScan = -1e9;
-/** 上一次扫描时的「拓扑签名」：cell 数 + 总高度。没变就说明分组不会变，不必重量。 */
+/** 上一次「已采纳」的拓扑签名：cell 数 + 总高度。没变就说明分组不会变，不必重量。 */
 let threadSig = '';
+/** 正在等它稳住的候选签名，以及它第一次出现的时刻 */
+let pendingSig = '';
+let pendingAt = 0;
+/** 稳定性重试定时器 */
+let pendingTimer = 0;
+
+/**
+ * 滚动冻结。滚动时 X 的虚拟列表一直在增删 cell，此时算分组既贵又不准：
+ * 窗口顶部会把回复链截断，链首被判成链尾，thread class 一翻，article 高度差 15px，
+ * 整列 translateY 跟着重排 —— 表现就是「闪一下、错一下、又好了」。
+ * 冻结期间只保留 reflowCards（不跑就会叠住），全量扫描让到停滚之后。
+ */
+let frozen = false;
+
+export function setFeedFrozen(v: boolean): void {
+  frozen = v;
+}
 
 /** 主栏被整棵换掉时清掉签名，强制下一轮重扫 */
 export function resetThreadSig(): void {
   threadSig = '';
+  pendingSig = '';
+  pendingAt = 0;
   lastThreadScan = -1e9;
+  clearTimeout(pendingTimer);
+  pendingTimer = 0;
 }
 
 interface ThreadLink {
@@ -234,6 +255,7 @@ function setVar(el: HTMLElement, name: string, value: string): void {
  * 组内 cell 不裁上下，背景连成一块，竖线不再被切出线头。
  */
 export function markThreads(): void {
+  if (frozen) return;
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
   if (!col) return;
   // 裁切只在卡片模式下存在，没开卡片就不用分组
@@ -250,11 +272,21 @@ export function markThreads(): void {
   // 拓扑签名：数量 + 总高度。滚动时 X 只改 translateY、不改高度，签名稳定
   const sig = `${cells.length}|${Math.round(sum)}`;
   if (sig === threadSig) return;
-  // 逐条量几何是整轮里最贵的一段，鼠标悬停会反复触发 applyFlat，这里限频
   const now = performance.now();
-  if (now - lastThreadScan < 800) return;
+  // 签名必须连续 260ms 不变才采纳 —— 滚动中列表换到一半时算出来的分组是错的；
+  // 同时保留 800ms 的扫描限频（鼠标悬停会反复触发 applyFlat）。
+  if (sig !== pendingSig) { pendingSig = sig; pendingAt = now; }
+  const wait = Math.max(260 - (now - pendingAt), 800 - (now - lastThreadScan));
+  if (wait > 0) {
+    // ⛔ 必须自己排重试：页面静下来之后没有任何 mutation，不会有人再调到这里
+    if (!pendingTimer) {
+      pendingTimer = window.setTimeout(() => { pendingTimer = 0; markThreads(); }, Math.ceil(wait) + 16);
+    }
+    return;
+  }
   lastThreadScan = now;
   threadSig = sig;
+  pendingSig = '';
   const links = cells.map((c): ThreadLink | null => {
     const art = topTweetOf(c);
     return art ? threadLink(art, c) : null;
@@ -283,9 +315,13 @@ export function markThreads(): void {
     i = j;
   }
 
+  let changed = false;
   for (const cell of cells) {
     const next = want.get(cell) ?? '';
-    for (const cls of THREAD_CLS) cell.classList.toggle(cls, cls === next);
+    for (const cls of THREAD_CLS) {
+      const on = cls === next;
+      if (cell.classList.contains(cls) !== on) { cell.classList.toggle(cls, on); changed = true; }
+    }
     // 按钮块没有 article，画线会盖在「显示回复」上
     const g = topTweetOf(cell) ? geo.get(cell) : undefined;
     if (g) {
@@ -299,11 +335,15 @@ export function markThreads(): void {
     }
     // 按钮块没有 article，走不到 applyFlat 的分割线清理，这里单独抹
     if (isJoiner(cell)) {
-      cell.classList.add(FLAT_CELL_CLS, JOINER_CLS);
+      if (!cell.classList.contains(JOINER_CLS)) cell.classList.add(FLAT_CELL_CLS, JOINER_CLS);
       wipeFlatLine(cell);
     }
   }
   document.documentElement.dataset.xmThreads = String(groups);
+  // class 一改，article 高度就变了 ±15px（组首/组尾的 padding 差异）。
+  // ⛔ 必须在本任务内立刻重排：交给下一帧的 tick，中间那一帧就是「已改高度、未改 translateY」，
+  // 画面上会看到推文叠住再弹开 —— 也就是「偶尔排版错乱但最终会好」。
+  if (changed) reflowCards();
 }
 
 /**
@@ -387,7 +427,9 @@ export function applyFlat(on: boolean): void {
       if (!cell) return;
       cellByArt.set(a, cell);
     }
-    cell.classList.add(FLAT_CELL_CLS);
+    // ⛔ classList.add 对已存在的 class 也会重写 attribute、触发 mutation：
+    // 每条 cell 每轮都写一遍，滚动时就是肉眼可见的重排抖动。先判存在再写。
+    if (!cell.classList.contains(FLAT_CELL_CLS)) cell.classList.add(FLAT_CELL_CLS);
     if (seenArt.has(a)) return;
     seenArt.add(a);
     for (let el: HTMLElement | null = cell; el && el !== col; el = el.parentElement) wipeFlatLine(el);
@@ -466,9 +508,8 @@ export function applyFlat(on: boolean): void {
 const TY_RE = /translateY\((-?[\d.]+)px\)/;
 
 /**
- * 重排基准。只在主栏被换成另一个节点时重取 ——
- * 若每轮都读 cells[0] 的当前 translateY，X 的滚动锚定一改首项，整列就被带着平移一次，
- * 表现成「回到首页后画面不停上下跳」。
+ * 重排基准：只在「渲染窗口的第一条还没有 translateY」时兜底用。
+ * 只要首条自带 y，就以它为锚往下推 —— 绝不把整列平移到某个固定基准上。
  */
 let baseCol: HTMLElement | null = null;
 let baseY = 0;
@@ -479,7 +520,11 @@ export function resetReflowBase(): void {
 
 /**
  * 重排虚拟列表：改成卡片后 cell 变高，而 X 把每条的 translateY 写死在行内，不会重算。
- * 按 DOM 顺序累加 offsetHeight 逐条重写，基准锁定，保证整条时间线不整体位移。
+ *
+ * ⛔ 只做「局部修复」，不做绝对坐标重算：
+ * 每轮从首条重新累加，一旦 X 把顶部 cell 摘掉（滚动时的常态），首条换成第二条，
+ * 整列就会被我们按新起点平移一次 —— 每摘一格抖一下，正是滚动时的重排来源。
+ * 改成「后一条 = 前一条 y + 前一条高度」，已有位置原地不动，只补掉错位的那几格。
  */
 export function reflowCards(): void {
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
@@ -487,30 +532,51 @@ export function reflowCards(): void {
   const cells = Array.from(col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]'));
   if (cells.length < 2) return;
 
+  // ⛔ 读写分离：先把所有高度读完再统一写，不要在「写样式 → 读高度」之间来回切。
+  // 这种交替每轮都会逼浏览器做一次同步重排，滚动时每帧几十条，就是卡顿与闪动的来源。
+  const n = cells.length;
+  const has = new Uint8Array(n);
+  const hs = new Float64Array(n);
+  const ys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const h = cells[i].offsetHeight;
+    has[i] = h > 0 ? 1 : 0;
+    hs[i] = h;
+    const cur = TY_RE.exec(cells[i].style.transform || '');
+    ys[i] = cur ? parseFloat(cur[1]) : NaN;
+  }
+
+  // 锚点：首条自带 y 就用它，否则退回绑定主栏时记下的基准
+  let first = 0;
+  while (first < n && !has[first]) first++;
+  if (first >= n) return;
   if (baseCol !== col || !baseCol.isConnected) {
-    const m0 = TY_RE.exec(cells[0].style.transform || '');
-    baseY = m0 ? parseFloat(m0[1]) : 0;
+    baseY = Number.isNaN(ys[first]) ? 0 : ys[first];
     baseCol = col;
   }
-  const base = baseY;
-  let acc = base;
+
+  let prevY = Number.isNaN(ys[first]) ? baseY : ys[first];
+  let prevH = hs[first];
   let moved = 0;
-  for (const c of cells) {
-    const h = c.offsetHeight;
-    if (h === 0) continue; // 广告 / 折叠项：不占位也不动它
-    const cur = TY_RE.exec(c.style.transform || '');
-    const y = cur ? parseFloat(cur[1]) : null;
-    if (y === null || Math.abs(y - acc) > 0.5) {
-      c.style.setProperty('transform', `translateY(${acc.toFixed(3)}px)`, 'important');
+  if (Number.isNaN(ys[first])) {
+    cells[first].style.setProperty('transform', `translateY(${prevY.toFixed(3)}px)`, 'important');
+    moved++;
+  }
+  for (let i = first + 1; i < n; i++) {
+    if (!has[i]) continue; // 广告 / 折叠项：不占位也不动它
+    const want = prevY + prevH;
+    if (!(Math.abs(ys[i] - want) <= 0.5)) {
+      cells[i].style.setProperty('transform', `translateY(${want.toFixed(3)}px)`, 'important');
       moved++;
     }
-    acc += h;
+    prevY = want;
+    prevH = hs[i];
   }
 
   // 容器高度：X 靠它算可滚动范围
-  const wrap = cells[0].parentElement;
-  if (wrap && wrap !== col && base === 0) {
-    const need = Math.round(acc);
+  const wrap = cells[first].parentElement;
+  if (wrap && wrap !== col) {
+    const need = Math.round(prevY + prevH);
     const cur = parseFloat(wrap.style.minHeight) || 0;
     if (Math.abs(cur - need) > 0.5) wrap.style.setProperty('min-height', `${need}px`, 'important');
   }

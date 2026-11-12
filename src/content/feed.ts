@@ -7,6 +7,8 @@ const QUOTE_CLS = 'xm-quote';
 const PHOTO_CLS = 'xm-photo';
 const MEDIA_CLS = 'xm-media';
 const FLAT_CELL_CLS = 'xm-cell-flat';
+const JOINER_CLS = 'xm-joiner';
+const SPAM_CLS = 'xm-spam';
 
 /** 回复链：同一条链上的 cell 只在首尾裁切，中间不裁，竖线才连得住 */
 const THREAD_TOP = 'xm-thread-top';
@@ -120,6 +122,49 @@ function isJoiner(cell: HTMLElement): boolean {
   return JOINER_RE.test((cell.textContent || '').trim());
 }
 
+/**
+ * 「显示可能的垃圾信息」这类折叠入口 —— 同样是纯文字按钮，不是推文。
+ * 跟推广一样整条藏掉：留着既是一条裸露的文字，又会被卡片裁切切掉半行。
+ */
+const SPAM_RE =
+  /显示可能的垃圾信息|可能包含垃圾信息|显示更多可能的|Show (more )?probable spam|probable spam|Show spam|スパムの可能性/i;
+
+/** 垃圾块扫描的限频时间戳 */
+let lastSpamScan = -1e9;
+
+/**
+ * 藏掉「可能的垃圾信息」入口。只在开启「隐藏推广」时生效，跟广告同一个开关。
+ * 有推文的 cell 一律不动 —— 正文里出现这几个字（比如有人在讨论垃圾信息）不算入口。
+ */
+export function markSpam(): void {
+  const html = document.documentElement;
+  const now = performance.now();
+  if (now - lastSpamScan < 600) return;
+  lastSpamScan = now;
+  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  if (!col) return;
+  // 开关关掉时要能撤回：class 是 JS 打的，纯 CSS 收不回去
+  if (!html.classList.contains('xm-noads')) {
+    const marked = col.querySelectorAll<HTMLElement>('.' + SPAM_CLS);
+    if (!marked.length) return;
+    marked.forEach((el) => el.classList.remove(SPAM_CLS));
+    html.dataset.xmSpam = '0';
+    if (html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
+    return;
+  }
+  let added = 0;
+  col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
+    if (cell.classList.contains(SPAM_CLS)) return;
+    if (cell.querySelector('article[data-testid="tweet"]')) return;
+    if (!SPAM_RE.test((cell.textContent || '').trim())) return;
+    cell.classList.add(SPAM_CLS);
+    added++;
+  });
+  html.dataset.xmSpam = String(col.querySelectorAll('.' + SPAM_CLS).length);
+  // 藏掉后这一格高度归零，下面的 translateY 得重排，否则原地留一条空带
+  if (added && html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
+}
+
 /** 线程扫描的限频时间戳（applyFlat 会被悬停、心跳反复调用） */
 let lastThreadScan = -1e9;
 
@@ -197,7 +242,7 @@ export function markThreads(): void {
     }
     // 按钮块没有 article，走不到 applyFlat 的分割线清理，这里单独抹
     if (isJoiner(cell)) {
-      cell.classList.add(FLAT_CELL_CLS);
+      cell.classList.add(FLAT_CELL_CLS, JOINER_CLS);
       wipeFlatLine(cell);
     }
   }
@@ -254,7 +299,7 @@ export function applyFlat(on: boolean): void {
   const html = document.documentElement;
   html.classList.toggle('xm-flat', on);
   if (!on) {
-    for (const cls of [QUOTE_CLS, PHOTO_CLS, MEDIA_CLS, FLAT_CELL_CLS, ...THREAD_CLS]) {
+    for (const cls of [QUOTE_CLS, PHOTO_CLS, MEDIA_CLS, FLAT_CELL_CLS, JOINER_CLS, SPAM_CLS, ...THREAD_CLS]) {
       document.querySelectorAll<HTMLElement>('.' + cls).forEach((el) => el.classList.remove(cls));
     }
     for (const [el, prev] of flatLines) {
@@ -269,6 +314,8 @@ export function applyFlat(on: boolean): void {
   if (!col) return;
 
   const cw = col.getBoundingClientRect().width || 0;
+  // 0) 先把「可能的垃圾信息」入口藏掉，后面的分组 / 重排就不用管它
+  markSpam();
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
   const arts = [...col.querySelectorAll<HTMLElement>('article')].filter((a) => !a.parentElement?.closest('article'));
 

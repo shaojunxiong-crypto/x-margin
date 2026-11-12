@@ -119,6 +119,15 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
   padding-top:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
   padding-bottom:var(--xm-card-pad,19px)!important;
 }
+/* 「显示回复」这类纯按钮块：文字在格子里垂直居中，底部那 15px 裁切正好切到字上。
+   补回 --xm-card-pad 让裁切落在空白处，裁完仍剩 4px，与推文卡片的留白一致。 */
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-joiner{
+  padding-bottom:var(--xm-card-pad,19px)!important;
+}
+/* 不是组尾的按钮块两头都被裁，上侧也补一截 */
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-joiner:not(.xm-thread-end){
+  padding-top:var(--xm-card-pad,19px)!important;
+}
 /* 组内补线：X 自己的线只画到 article 的内容区，被 --xm-card-pad 顶开成两截。
    按同一条横坐标补一条贯穿 cell 全高的线接上；clip-path 会顺带裁掉组首/组尾多出来的那截。 */
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-top::before,
@@ -166,6 +175,8 @@ html.xm-wide [data-testid="primaryColumn"] .xm-wide-el{max-width:var(--xm-feed-w
 html.xm-noads [data-testid="cellInnerDiv"]:has([data-testid="placementTracking"]),
 html.xm-noads [data-testid="placementTracking"]:has(article[data-testid="tweet"]),
 html.xm-noads article[data-testid="tweet"]:has([data-testid="placementTracking"]){display:none!important}
+/* 「显示可能的垃圾信息」入口：纯文字按钮，不是推文。留着就是一条裸露文字 + 被裁掉半行，整条收掉。 */
+html.xm-noads [data-testid="cellInnerDiv"].xm-spam{display:none!important}
 html.xm-nocompose .xm-comp-hide{display:none!important}
 html.xm-hidecompose [data-testid="SideNav_NewTweet_Button"]{display:none!important}
 /* 滚动条：只碰根容器，弹窗与列表内部保留。两条缺一不可 —— 只写 scrollbar-width 时 Windows 的经典滚动条还在。 */

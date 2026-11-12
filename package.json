@@ -1,8 +1,14 @@
 {
   "name": "x-margin",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "private": true,
   "description": "X MARGIN — x.com 的阅读体验重塑：背景、字体、主题、布局与推文截图",
+  "author": "sjx <shaojunxiong@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shaojunxiong-crypto/x-margin.git"
+  },
+  "homepage": "https://github.com/shaojunxiong-crypto/x-margin#readme",
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",

@@ -16,6 +16,7 @@
 npm install
 npm run build      # tsc --noEmit + 打包到 dist/
 npm run pack       # 可选：产出 x-margin.zip
+node scripts/make-icons.mjs   # 可选：重新生成 public/icons/ 下的四档图标
 ```
 
 Chrome → `chrome://extensions` → 打开「开发者模式」→「加载已解压的扩展程序」→ 选 `dist/`。
@@ -39,6 +40,8 @@ src/
     theme.ts             night_mode cookie
     bg/                  着色器与背景层
 public/fonts/            字体子集与切片表
+public/icons/            扩展图标（黑底 X 字标，16 / 32 / 48 / 128）
+scripts/make-icons.mjs   图标生成（矢量渲染，不依赖位图放大）
 ```
 
 ## 设置
@@ -500,3 +503,17 @@ WebGPU 那套（vgpu + 4 个 wgsl）约 200KB，只有选到它时才由内容�
 - 图标容器的判定依赖 `:has()`（Chrome 105+，MV3 最低要求已满足）
 - 表单页（登录、发推弹窗）沿用 X 原底色，不做半透明——半透明编辑框打字会花
 - 「薄」档 + 高亮背景（如「天光」「颗粒」）时，长文阅读会有点晃眼，换「中/厚」或降强度
+
+## 隐私
+
+不收集、不上传任何数据，没有埋点，也没有远程请求。设置存在浏览器本地（`storage.sync` / `storage.local`），截图全程在本机裁切拼接，不进扩展存储。
+
+`host_permissions` 里那条 `<all_urls>` 只为 `captureVisibleTab` 服务——它只认 `<all_urls>` 或 `activeTab`，而 `activeTab` 必须由扩展手势授予，页面里的按钮触发不了。内容脚本的匹配范围仍然只有 `x.com` 与 `twitter.com`。
+
+逐项用途见 [PRIVACY.md](PRIVACY.md)。
+
+## 许可
+
+[MIT](LICENSE)。着色器、字体注入与部分注入思路来自 [映间 MARGIN](https://github.com/jiuyang5354/bilibili-margin)（同样 MIT）。打包字体各自的许可见 `public/fonts/FONTS-LICENSES.md`。
+
+本项目是第三方扩展，与 X Corp. 无隶属关系；图标使用 X 的字标仅为标识所服务的站点。

@@ -39,7 +39,7 @@ function sync(): void {
   theme = resolveTheme(s.theme, detectTheme());
   applyAccent(s.accent);
   applySkin(theme, s.bg.mode !== 'off', s.bg.glass, s.softText, s.layout.cardFeed);
-  applyFont(s.font.choice, s.font.custom, s.font.scale);
+  applyFont(s.font.choice, s.font.custom);
   applyLayout(s.layout);
   clearCardWrappers(s.layout.cardFeed);
   // 等一帧让 CSS 生效后再量高度

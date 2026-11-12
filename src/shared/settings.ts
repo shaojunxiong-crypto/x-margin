@@ -1,4 +1,4 @@
-/** 设置：背景（模式 / 着色器 / 强度 / 随机池）+ 字体（字体族 / 自定义名 / 字号缩放） */
+/** 设置：背景（模式 / 着色器 / 强度 / 随机池）+ 字体（字体族 / 自定义名） */
 
 export type ShaderId =
   | 'aurora' | 'silk' | 'mesh' | 'grain' | 'ice' | 'veil'
@@ -6,7 +6,6 @@ export type ShaderId =
 
 export type BgMode = 'off' | 'fixed' | 'random' | 'image';
 export type FontChoice = 'x' | 'sans' | 'serif' | 'custom';
-export type Scale = 100 | 110 | 120;
 /** 玻璃浓度：厚 = 更接近原底色，薄 = 背景更明显 */
 export type Glass = 'thick' | 'mid' | 'thin';
 /** 推文流（主栏）宽度：X 原生 600，加宽到 720 / 840 */
@@ -48,7 +47,7 @@ export interface Layout {
 
 export interface Settings {
   bg: Background;
-  font: { choice: FontChoice; custom: string; scale: Scale };
+  font: { choice: FontChoice; custom: string };
   layout: Layout;
   /** 外观：white / black / 跟随系统。写的是 X 自己的 night_mode cookie */
   theme: 'auto' | 'light' | 'dark';
@@ -65,7 +64,7 @@ export const SHADERS: ShaderId[] = ['aurora', 'silk', 'mesh', 'grain', 'ice', 'v
 
 export const DEFAULTS: Settings = {
   bg: { mode: 'off', shader: 'aurora', intensity: 0.85, pool: [], glass: 'mid' },
-  font: { choice: 'x', custom: '', scale: 100 },
+  font: { choice: 'x', custom: '' },
   layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, cardFeed: true, noScrollbar: true, hideFloats: true },
   theme: 'auto',
   accent: '#1d9bf0',
@@ -116,7 +115,6 @@ export function sanitize(raw: unknown): Settings {
     font: {
       choice: f.choice === 'sans' || f.choice === 'serif' || f.choice === 'custom' ? f.choice : 'x',
       custom: cleanFont(f.custom),
-      scale: f.scale === 110 || f.scale === 120 ? f.scale : 100,
     },
     layout: {
       hideSidebar: typeof l.hideSidebar === 'boolean' ? l.hideSidebar : DEFAULTS.layout.hideSidebar,

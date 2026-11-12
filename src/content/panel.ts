@@ -1,4 +1,4 @@
-import type { FeedWidth, Glass, Scale, Settings } from '../shared/settings';
+import type { FeedWidth, Glass, Settings } from '../shared/settings';
 import { ACCENTS, BG_IMAGE_KEY, cleanFont, cleanHex, SHADERS } from '../shared/settings';
 import { SHADER_NAMES } from './bg/shaders';
 import { compressImage } from './bg/background';
@@ -504,13 +504,6 @@ export function createPanel(opts: PanelOptions): PanelApi {
         f.box.append(inp);
       }
     }
-    {
-      const f = field(card, '字号', `${s.font.scale}%`);
-      seg<Scale>(f.box, [[100, '100'], [110, '110'], [120, '120']], s.font.scale, (v) => {
-        void opts.update({ font: { ...s.font, scale: v } }).then(render);
-      });
-    }
-
     const ver = chrome.runtime?.getManifest?.().version ?? '';
     const ft = el('div', 'xm-ft');
     ft.innerHTML = '全部改动即时生效，关掉即还原。<b>'

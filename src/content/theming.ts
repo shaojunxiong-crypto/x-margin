@@ -4,7 +4,7 @@
  * 每处改动都记在原值表里，关闭时原样还回去。
  */
 
-import type { FontChoice, Glass, Scale } from '../shared/settings';
+import type { FontChoice, Glass } from '../shared/settings';
 
 export type Theme = 'light' | 'dark';
 
@@ -129,7 +129,7 @@ export function applySkin(theme: Theme, on: boolean, glass: Glass = 'mid', softT
   if (bar) paint(bar, surface(theme, glass, false));
 }
 
-export function applyFont(choice: FontChoice, custom: string, scale: Scale): void {
+export function applyFont(choice: FontChoice, custom: string): void {
   const html = document.documentElement;
   const stacks: Record<'sans' | 'serif', string> = {
     sans: '"Geist","Margin Sans SC",system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif',
@@ -143,8 +143,6 @@ export function applyFont(choice: FontChoice, custom: string, scale: Scale): voi
   html.classList.toggle('xm-font', Boolean(stack));
   if (stack) html.style.setProperty('--xm-font', stack);
   else html.style.removeProperty('--xm-font');
-  if (scale === 100) html.removeAttribute('data-zoom');
-  else html.dataset.zoom = String(scale);
 }
 
 /** 读 X 实际渲染的底色判断明暗，比 meta / prefers-color-scheme 准 */

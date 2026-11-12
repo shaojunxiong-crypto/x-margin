@@ -138,14 +138,16 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
 }
 `;
 
-/** 字体与玻璃：字号缩放走 zoom，其余一律 font-family */
+/** 字体与玻璃：字体族走 --xm-font，正文字号单独覆盖 */
 const FONT_CSS = `
 html.xm-font body,
 html.xm-font body *:not(svg):not(svg *):not(code):not(pre){
   font-family:var(--xm-font)!important;
 }
-html[data-zoom="110"] #react-root{zoom:1.1}
-html[data-zoom="120"] #react-root{zoom:1.2}
+/* 正文字号：X 全站字号是 px 写死在原子类里的（正文 15/20），没有可继承的根字号，只能按语义选择器覆盖。
+   内部 span 各自带着字号类，必须一并拉成 inherit —— 否则只有裸文本变大，链接、话题标签还是 15px。 */
+[data-testid="tweetText"]{font-size:16px!important;line-height:21px!important}
+[data-testid="tweetText"] *{font-size:inherit!important;line-height:inherit!important}
 html.xm-skin[data-glass="mid"] [data-testid="primaryColumn"],
 html.xm-skin[data-glass="mid"] [data-testid="sidebarColumn"],
 html.xm-skin[data-glass="mid"] header[role="banner"]{backdrop-filter:blur(10px) saturate(1.3)}

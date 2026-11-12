@@ -104,6 +104,14 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-end{
   clip-path:inset(0 var(--xm-card-x,0px) var(--xm-card-gap,15px) var(--xm-card-x,0px))!important;
 }
+/* 组内补线：X 自己的线只画到 article 的内容区，被 --xm-card-pad 顶开成两截。
+   按同一条横坐标补一条贯穿 cell 全高的线接上；clip-path 会顺带裁掉组首/组尾多出来的那截。 */
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-top::before,
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-mid::before,
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-end::before{
+  content:"";position:absolute;top:0;bottom:0;left:var(--xm-lx,-99px);
+  width:var(--xm-lw,2px);background:var(--xm-lc,transparent);pointer-events:none;
+}
 `;
 
 /** 字体与玻璃：字号缩放走 zoom，其余一律 font-family */

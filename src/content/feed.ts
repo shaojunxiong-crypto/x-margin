@@ -59,26 +59,37 @@ function cellOf(article: HTMLElement, col: HTMLElement, cw: number): HTMLElement
 }
 
 /**
- * 线程竖线：X 用 1–3px 宽的 div 画，没有 testid、class 是构建哈希，
- * 只能按几何认 —— 窄、够高、有底色（或左描边）、贴着推文左侧。
- * 分别记「上段」「下段」：只有上一段下沿与下一段上沿都伸到各自推文边界，
- * 这两条才算连在同一条回复链上（链尾只有上段，不会把后面无关的推文吸进来）。
+ * 线程竖线：X 用 2px 宽的 div 画，没有 testid、class 全是构建哈希。
+ * ⛔ 别拿高度当门槛 —— 推文顶部那段只有一行高（约 12–20px），压 16px 会整片漏判。
+ * 可靠特征是「水平中线压在头像中轴上」：线永远是头像列居中那根。
+ * 分别记上段 / 下段：上一段下沿与下一段上沿都伸到各自推文边界，才算连在同一条链上。
+ * 顺便记下线的横坐标 / 宽度 / 颜色，组内补线要用（见 THREAD_LINE_CSS）。
  */
-function threadLink(article: HTMLElement): { up: boolean; down: boolean } {
-  const link = { up: false, down: false };
+function threadLink(article: HTMLElement, cell: HTMLElement): ThreadLink {
+  const link: ThreadLink = { up: false, down: false, x: 0, w: 2, color: '' };
   const ar = article.getBoundingClientRect();
   if (ar.height < 24) return link;
+  const cr = cell.getBoundingClientRect();
+  const av = article.querySelector<HTMLElement>('[data-testid="Tweet-User-Avatar"]');
+  const avr = av?.getBoundingClientRect();
+  const axis = avr && avr.width ? avr.left + avr.width / 2 : null;
   const EDGE = 26; // 线端离推文边界的容差；必须大于 --xm-card-pad（19px），否则线被 padding 顶开就认不出
-  for (const el of article.querySelectorAll<HTMLElement>('div,span')) {
+  for (const el of article.querySelectorAll<HTMLElement>('div')) {
     const r = el.getBoundingClientRect();
-    if (r.width < 0.5 || r.width > 4 || r.height < 16) continue;
-    if (r.left - ar.left > 72) continue;
+    if (r.width < 0.5 || r.width > 5 || r.height < 2) continue;
+    if (axis === null) {
+      if (r.left - ar.left > 72) continue;
+    } else if (Math.abs(r.left + r.width / 2 - axis) > 8) continue;
     const cs = getComputedStyle(el);
     // X 两种画法都见过：实心 div，或 1–2px 的左描边盒子
-    const painted =
-      alphaOf(cs.backgroundColor) >= 0.15 ||
-      (parseFloat(cs.borderLeftWidth) >= 1 && alphaOf(cs.borderLeftColor) >= 0.15);
-    if (!painted) continue;
+    const solid = alphaOf(cs.backgroundColor) >= 0.15;
+    const border = parseFloat(cs.borderLeftWidth) >= 1 && alphaOf(cs.borderLeftColor) >= 0.15;
+    if (!solid && !border) continue;
+    if (!link.color) {
+      link.x = Math.round(r.left - cr.left);
+      link.w = Math.max(1, Math.round(r.width));
+      link.color = solid ? cs.backgroundColor : cs.borderLeftColor;
+    }
     if (r.top - ar.top < EDGE) link.up = true;
     if (ar.bottom - r.bottom < EDGE) link.down = true;
     if (link.up && link.down) break;
@@ -98,8 +109,33 @@ function topTweetOf(cell: HTMLElement): HTMLElement | null {
   return cell.querySelector<HTMLElement>('article[data-testid="tweet"]');
 }
 
+/**
+ * 「显示回复 / 显示更多帖子」这类纯按钮 cell —— 里面没有 article，
+ * 单独成卡就是一行裸露的文字，应该并进上面那条推文。
+ */
+const JOINER_RE = /显示(更多)?回复|显示更多帖子|Show (more )?replies|Show more posts|返信を表示|답글 표시/i;
+
+function isJoiner(cell: HTMLElement): boolean {
+  if (cell.querySelector('article')) return false;
+  return JOINER_RE.test((cell.textContent || '').trim());
+}
+
 /** 线程扫描的限频时间戳（applyFlat 会被悬停、心跳反复调用） */
 let lastThreadScan = -1e9;
+
+interface ThreadLink {
+  up: boolean;
+  down: boolean;
+  /** 线左缘相对 cell 的偏移、宽度、颜色（组内补线用） */
+  x: number;
+  w: number;
+  color: string;
+}
+
+/** 同值不写，避免每轮心跳都让样式失效 */
+function setVar(el: HTMLElement, name: string, value: string): void {
+  if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value);
+}
 
 /**
  * 给回复链打标记：相邻两条的线接得上就并进同一组。
@@ -117,20 +153,30 @@ export function markThreads(): void {
   // 高度 0 的是被隐藏的推广 / 折叠项：不占位，也不该把回复链断开
   const cells = Array.from(col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]'))
     .filter((c) => c.offsetHeight > 0);
-  const links = cells.map((c) => {
+  const links = cells.map((c): ThreadLink | null => {
     const art = topTweetOf(c);
-    return art ? threadLink(art) : { up: false, down: false };
+    return art ? threadLink(art, c) : null;
+  });
+  // 按钮块一律并进上一条；其余靠竖线接不接得上
+  const join = cells.map((c, i) => {
+    if (i === 0) return false;
+    if (isJoiner(c)) return true;
+    return Boolean(links[i - 1]?.down && links[i]?.up);
   });
 
   const want = new Map<HTMLElement, string>();
+  const geo = new Map<HTMLElement, ThreadLink>();
   let groups = 0;
   for (let i = 0; i < cells.length; i++) {
     let j = i;
-    while (j + 1 < cells.length && links[j].down && links[j + 1].up) j++;
+    while (j + 1 < cells.length && join[j + 1]) j++;
     if (j === i) continue;
     want.set(cells[i], THREAD_TOP);
     for (let k = i + 1; k < j; k++) want.set(cells[k], THREAD_MID);
     want.set(cells[j], THREAD_END);
+    // 组内推文的 padding 把 X 自己画的线顶开了，用同一个横坐标补一条贯穿线
+    const found = links.slice(i, j + 1).find((l): l is ThreadLink => Boolean(l && l.color));
+    if (found) for (let k = i; k <= j; k++) geo.set(cells[k], found);
     groups++;
     i = j;
   }
@@ -138,6 +184,22 @@ export function markThreads(): void {
   for (const cell of cells) {
     const next = want.get(cell) ?? '';
     for (const cls of THREAD_CLS) cell.classList.toggle(cls, cls === next);
+    // 按钮块没有 article，画线会盖在「显示回复」上
+    const g = topTweetOf(cell) ? geo.get(cell) : undefined;
+    if (g) {
+      setVar(cell, '--xm-lx', `${g.x}px`);
+      setVar(cell, '--xm-lw', `${g.w}px`);
+      setVar(cell, '--xm-lc', g.color);
+    } else {
+      cell.style.removeProperty('--xm-lx');
+      cell.style.removeProperty('--xm-lw');
+      cell.style.removeProperty('--xm-lc');
+    }
+    // 按钮块没有 article，走不到 applyFlat 的分割线清理，这里单独抹
+    if (isJoiner(cell)) {
+      cell.classList.add(FLAT_CELL_CLS);
+      wipeFlatLine(cell);
+    }
   }
   document.documentElement.dataset.xmThreads = String(groups);
 }

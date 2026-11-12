@@ -8,6 +8,12 @@ const PHOTO_CLS = 'xm-photo';
 const MEDIA_CLS = 'xm-media';
 const FLAT_CELL_CLS = 'xm-cell-flat';
 
+/** 回复链：同一条链上的 cell 只在首尾裁切，中间不裁，竖线才连得住 */
+const THREAD_TOP = 'xm-thread-top';
+const THREAD_MID = 'xm-thread-mid';
+const THREAD_END = 'xm-thread-end';
+const THREAD_CLS = [THREAD_TOP, THREAD_MID, THREAD_END];
+
 interface PrevBg { color: string; image: string }
 
 /** 抹掉过的 border-bottom 原值 */
@@ -50,6 +56,90 @@ function cellOf(article: HTMLElement, col: HTMLElement, cw: number): HTMLElement
     if (cw > 0 && r.width >= cw * 0.9 && r.height >= 40) return el;
   }
   return null;
+}
+
+/**
+ * 线程竖线：X 用 1–3px 宽的 div 画，没有 testid、class 是构建哈希，
+ * 只能按几何认 —— 窄、够高、有底色（或左描边）、贴着推文左侧。
+ * 分别记「上段」「下段」：只有上一段下沿与下一段上沿都伸到各自推文边界，
+ * 这两条才算连在同一条回复链上（链尾只有上段，不会把后面无关的推文吸进来）。
+ */
+function threadLink(article: HTMLElement): { up: boolean; down: boolean } {
+  const link = { up: false, down: false };
+  const ar = article.getBoundingClientRect();
+  if (ar.height < 24) return link;
+  const EDGE = 26; // 线端离推文边界的容差；必须大于 --xm-card-pad（19px），否则线被 padding 顶开就认不出
+  for (const el of article.querySelectorAll<HTMLElement>('div,span')) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 0.5 || r.width > 4 || r.height < 16) continue;
+    if (r.left - ar.left > 72) continue;
+    const cs = getComputedStyle(el);
+    // X 两种画法都见过：实心 div，或 1–2px 的左描边盒子
+    const painted =
+      alphaOf(cs.backgroundColor) >= 0.15 ||
+      (parseFloat(cs.borderLeftWidth) >= 1 && alphaOf(cs.borderLeftColor) >= 0.15);
+    if (!painted) continue;
+    if (r.top - ar.top < EDGE) link.up = true;
+    if (ar.bottom - r.bottom < EDGE) link.down = true;
+    if (link.up && link.down) break;
+  }
+  return link;
+}
+
+/** rgba()/rgb() 字符串的 alpha，认不出按 0 处理 */
+function alphaOf(color: string): number {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(color);
+  if (!m) return 0;
+  return m[4] === undefined ? 1 : +m[4];
+}
+
+/** 每条 cell 的第一层推文；引用推文里的 article 不算一条独立推文 */
+function topTweetOf(cell: HTMLElement): HTMLElement | null {
+  return cell.querySelector<HTMLElement>('article[data-testid="tweet"]');
+}
+
+/** 线程扫描的限频时间戳（applyFlat 会被悬停、心跳反复调用） */
+let lastThreadScan = -1e9;
+
+/**
+ * 给回复链打标记：相邻两条的线接得上就并进同一组。
+ * 组内 cell 不裁上下，背景连成一块，竖线不再被切出线头。
+ */
+export function markThreads(): void {
+  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  if (!col) return;
+  // 裁切只在卡片模式下存在，没开卡片就不用分组
+  if (!document.documentElement.classList.contains('xm-card')) return;
+  // 逐条量几何是整轮里最贵的一段，鼠标悬停会反复触发 applyFlat，这里限频
+  const now = performance.now();
+  if (now - lastThreadScan < 800) return;
+  lastThreadScan = now;
+  // 高度 0 的是被隐藏的推广 / 折叠项：不占位，也不该把回复链断开
+  const cells = Array.from(col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]'))
+    .filter((c) => c.offsetHeight > 0);
+  const links = cells.map((c) => {
+    const art = topTweetOf(c);
+    return art ? threadLink(art) : { up: false, down: false };
+  });
+
+  const want = new Map<HTMLElement, string>();
+  let groups = 0;
+  for (let i = 0; i < cells.length; i++) {
+    let j = i;
+    while (j + 1 < cells.length && links[j].down && links[j + 1].up) j++;
+    if (j === i) continue;
+    want.set(cells[i], THREAD_TOP);
+    for (let k = i + 1; k < j; k++) want.set(cells[k], THREAD_MID);
+    want.set(cells[j], THREAD_END);
+    groups++;
+    i = j;
+  }
+
+  for (const cell of cells) {
+    const next = want.get(cell) ?? '';
+    for (const cls of THREAD_CLS) cell.classList.toggle(cls, cls === next);
+  }
+  document.documentElement.dataset.xmThreads = String(groups);
 }
 
 /**
@@ -102,7 +192,7 @@ export function applyFlat(on: boolean): void {
   const html = document.documentElement;
   html.classList.toggle('xm-flat', on);
   if (!on) {
-    for (const cls of [QUOTE_CLS, PHOTO_CLS, MEDIA_CLS, FLAT_CELL_CLS]) {
+    for (const cls of [QUOTE_CLS, PHOTO_CLS, MEDIA_CLS, FLAT_CELL_CLS, ...THREAD_CLS]) {
       document.querySelectorAll<HTMLElement>('.' + cls).forEach((el) => el.classList.remove(cls));
     }
     for (const [el, prev] of flatLines) {
@@ -188,6 +278,8 @@ export function applyFlat(on: boolean): void {
   html.dataset.xmFlatQuotes = String(col.querySelectorAll('.' + QUOTE_CLS).length);
   html.dataset.xmFlatPhotos = String(col.querySelectorAll('.' + PHOTO_CLS).length);
   html.dataset.xmFlatMedia = String(col.querySelectorAll('.' + MEDIA_CLS).length);
+
+  markThreads();
 }
 
 const TY_RE = /translateY\((-?[\d.]+)px\)/;

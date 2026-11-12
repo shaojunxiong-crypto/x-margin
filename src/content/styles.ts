@@ -93,6 +93,17 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]>div>div,
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]>div>div>div{
   background-color:transparent!important;
 }
+/* 回复链：组内不裁上下，只给首尾各裁一刀。
+   ⛔ 中间不能留 gap —— 裁切会切断 X 画在左侧的线程竖线，露出线头。 */
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-top{
+  clip-path:inset(var(--xm-card-gap,15px) var(--xm-card-x,0px) 0 var(--xm-card-x,0px))!important;
+}
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-mid{
+  clip-path:inset(0 var(--xm-card-x,0px) 0 var(--xm-card-x,0px))!important;
+}
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-end{
+  clip-path:inset(0 var(--xm-card-x,0px) var(--xm-card-gap,15px) var(--xm-card-x,0px))!important;
+}
 `;
 
 /** 字体与玻璃：字号缩放走 zoom，其余一律 font-family */

@@ -8,7 +8,7 @@ const PHOTO_CLS = 'xm-photo';
 const MEDIA_CLS = 'xm-media';
 const FLAT_CELL_CLS = 'xm-cell-flat';
 const JOINER_CLS = 'xm-joiner';
-const SPAM_CLS = 'xm-spam';
+const NOISE_CLS = 'xm-noise';
 
 /** 回复链：同一条链上的 cell 只在首尾裁切，中间不裁，竖线才连得住 */
 const THREAD_TOP = 'xm-thread-top';
@@ -123,44 +123,62 @@ function isJoiner(cell: HTMLElement): boolean {
 }
 
 /**
- * 「显示可能的垃圾信息」这类折叠入口 —— 同样是纯文字按钮，不是推文。
- * 跟推广一样整条藏掉：留着既是一条裸露的文字，又会被卡片裁切切掉半行。
+ * 信息流里没有正文的杂物格子 —— 跟推广一起收掉：
+ *  · 垃圾折叠入口（「显示可能的垃圾信息」）
+ *  · 推荐关注模块（标题格 + 每条 UserCell）
+ * 它们既不是推文，也没有 out-of-card 的排版，留着就是一条裸露文字或被裁半行。
  */
 const SPAM_RE =
   /显示可能的垃圾信息|可能包含垃圾信息|显示更多可能的|Show (more )?probable spam|probable spam|Show spam|スパムの可能性/i;
+/** 推荐关注模块的标题格。X 把标题单独放一格，后面每条推荐各占一格。 */
+const NOISE_RE =
+  /who to follow|推荐关注|关注推荐|你可能想关注|可能认识的人|follow 推荐|フォローする人/i;
 
-/** 垃圾块扫描的限频时间戳 */
-let lastSpamScan = -1e9;
+/** 杂物块扫描的限频时间戳 */
+let lastNoiseScan = -1e9;
 
 /**
- * 藏掉「可能的垃圾信息」入口。只在开启「隐藏推广」时生效，跟广告同一个开关。
- * 有推文的 cell 一律不动 —— 正文里出现这几个字（比如有人在讨论垃圾信息）不算入口。
+ * 判定单个格子是不是该整条收起。有推文的正文字段一律放行 ——
+ * 有人在正文里讨论「垃圾信息」「who to follow」不算。
  */
-export function markSpam(): void {
+function isNoise(cell: HTMLElement): boolean {
+  if (cell.querySelector('article[data-testid="tweet"]')) return false;
+  if (cell.querySelector('[data-testid="UserCell"]')) return true;
+  const txt = (cell.textContent || '').trim();
+  if (!txt) return false;
+  if (SPAM_RE.test(txt)) return true;
+  // 标题很短，正文不会被误伤；不做 ^$ 锚定是因为标题格里可能带「显示更多」之类
+  return txt.length <= 40 && NOISE_RE.test(txt);
+}
+
+/**
+ * 藏掉杂物格子。只在开启「隐藏推广」时生效，跟广告同一个开关。
+ * 作用域限主栏 —— 右栏那个「Who to follow」模块是常驻组件，不动它。
+ */
+export function markNoise(): void {
   const html = document.documentElement;
   const now = performance.now();
-  if (now - lastSpamScan < 600) return;
-  lastSpamScan = now;
+  if (now - lastNoiseScan < 600) return;
+  lastNoiseScan = now;
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
   if (!col) return;
   // 开关关掉时要能撤回：class 是 JS 打的，纯 CSS 收不回去
   if (!html.classList.contains('xm-noads')) {
-    const marked = col.querySelectorAll<HTMLElement>('.' + SPAM_CLS);
+    const marked = col.querySelectorAll<HTMLElement>('.' + NOISE_CLS);
     if (!marked.length) return;
-    marked.forEach((el) => el.classList.remove(SPAM_CLS));
-    html.dataset.xmSpam = '0';
+    marked.forEach((el) => el.classList.remove(NOISE_CLS));
+    html.dataset.xmNoise = '0';
     if (html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
     return;
   }
   let added = 0;
   col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
-    if (cell.classList.contains(SPAM_CLS)) return;
-    if (cell.querySelector('article[data-testid="tweet"]')) return;
-    if (!SPAM_RE.test((cell.textContent || '').trim())) return;
-    cell.classList.add(SPAM_CLS);
+    if (cell.classList.contains(NOISE_CLS)) return;
+    if (!isNoise(cell)) return;
+    cell.classList.add(NOISE_CLS);
     added++;
   });
-  html.dataset.xmSpam = String(col.querySelectorAll('.' + SPAM_CLS).length);
+  html.dataset.xmNoise = String(col.querySelectorAll('.' + NOISE_CLS).length);
   // 藏掉后这一格高度归零，下面的 translateY 得重排，否则原地留一条空带
   if (added && html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
 }
@@ -299,7 +317,7 @@ export function applyFlat(on: boolean): void {
   const html = document.documentElement;
   html.classList.toggle('xm-flat', on);
   if (!on) {
-    for (const cls of [QUOTE_CLS, PHOTO_CLS, MEDIA_CLS, FLAT_CELL_CLS, JOINER_CLS, SPAM_CLS, ...THREAD_CLS]) {
+    for (const cls of [QUOTE_CLS, PHOTO_CLS, MEDIA_CLS, FLAT_CELL_CLS, JOINER_CLS, NOISE_CLS, ...THREAD_CLS]) {
       document.querySelectorAll<HTMLElement>('.' + cls).forEach((el) => el.classList.remove(cls));
     }
     for (const [el, prev] of flatLines) {
@@ -315,7 +333,7 @@ export function applyFlat(on: boolean): void {
 
   const cw = col.getBoundingClientRect().width || 0;
   // 0) 先把「可能的垃圾信息」入口藏掉，后面的分组 / 重排就不用管它
-  markSpam();
+  markNoise();
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
   const arts = [...col.querySelectorAll<HTMLElement>('article')].filter((a) => !a.parentElement?.closest('article'));
 

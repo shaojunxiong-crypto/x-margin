@@ -175,8 +175,9 @@ html.xm-wide [data-testid="primaryColumn"] .xm-wide-el{max-width:var(--xm-feed-w
 html.xm-noads [data-testid="cellInnerDiv"]:has([data-testid="placementTracking"]),
 html.xm-noads [data-testid="placementTracking"]:has(article[data-testid="tweet"]),
 html.xm-noads article[data-testid="tweet"]:has([data-testid="placementTracking"]){display:none!important}
-/* 「显示可能的垃圾信息」入口：纯文字按钮，不是推文。留着就是一条裸露文字 + 被裁掉半行，整条收掉。 */
-html.xm-noads [data-testid="cellInnerDiv"].xm-spam{display:none!important}
+/* 信息流杂物：垃圾折叠入口、推荐关注模块（标题 + UserCell）。不是推文，整条收掉。
+   作用域只到主栏的 cellInnerDiv —— 右栏常驻的 Who to follow 不受影响。 */
+html.xm-noads [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-noise{display:none!important}
 html.xm-nocompose .xm-comp-hide{display:none!important}
 html.xm-hidecompose [data-testid="SideNav_NewTweet_Button"]{display:none!important}
 /* 滚动条：只碰根容器，弹窗与列表内部保留。两条缺一不可 —— 只写 scrollbar-width 时 Windows 的经典滚动条还在。 */

@@ -38,13 +38,11 @@ export interface Layout {
   feedWidth: FeedWidth;
   /** 隐藏推文流里的推广 / 广告推文 */
   hideAds: boolean;
-  /** 推文浮起：主栏底色透明、去栏框与分割线，每条推文之间空一个行高（推文本身不加装饰） */
-  floatCards: boolean;
-  /** 每条推文独立成块：主栏不铺底板，推文之间留缝隙（clip-path 裁，不动 X 的定位） */
+  /** 每条推文独立成块：主栏不铺底板，推文之间留缝（clip-path 裁，不动 X 的定位） */
   cardFeed: boolean;
   /** 隐藏页面（根滚动容器）的滚动条：只去掉绘制，滚轮 / 键盘 / 触控板照常；弹窗与列表内部的滚动条不动 */
   noScrollbar: boolean;
-  /** 隐藏右下角的浮动按钮（Grok / 私信气泡）：X 的固定层，压着时间线右下角 */
+  /** 隐藏右下角的浮动按钮（Grok / 聊天气泡）：X 的固定层，压着时间线右下角 */
   hideFloats: boolean;
 }
 
@@ -68,7 +66,7 @@ export const SHADERS: ShaderId[] = ['aurora', 'silk', 'mesh', 'grain', 'ice', 'v
 export const DEFAULTS: Settings = {
   bg: { mode: 'off', shader: 'aurora', intensity: 0.85, pool: [], glass: 'mid' },
   font: { choice: 'x', custom: '', scale: 100 },
-  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, floatCards: false, cardFeed: true, noScrollbar: true, hideFloats: true },
+  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, cardFeed: true, noScrollbar: true, hideFloats: true },
   theme: 'auto',
   accent: '#1d9bf0',
   softText: true,
@@ -135,15 +133,10 @@ export function sanitize(raw: unknown): Settings {
       hideCompose: typeof l.hideCompose === 'boolean' ? l.hideCompose : DEFAULTS.layout.hideCompose,
       feedWidth: l.feedWidth === 600 || l.feedWidth === 840 ? l.feedWidth : 720,
       hideAds: typeof l.hideAds === 'boolean' ? l.hideAds : DEFAULTS.layout.hideAds,
-      // 推文浮起已下线（2026-11-11 主人裁定「排版修改全部回退」）。
-      // 字段留着只为兼容旧配置，一律强制 false —— 老配置里存的是 true，不强制就会继续生效。
-      floatCards: false,
-      // 推文独立成块：效果尚未定稿，先常开；面板开关等主人确认视觉后再加。
-      // 走 sanitize 强制 true，避免旧配置（没有这个字段）落到 false。
+      // 常开：这是当前唯一的推文流排版，不走设置项，旧配置一律覆盖成 true
       cardFeed: true,
-      // 旧配置（没有这个字段）要落到 DEFAULTS（true），不能落 false —— 否则升级后滚动条又冒出来
+      // 这几个字段旧配置里没有，缺省必须落 true，否则升级后功能倒退
       noScrollbar: typeof l.noScrollbar === 'boolean' ? l.noScrollbar : DEFAULTS.layout.noScrollbar,
-      // 同上：旧配置没有这个字段时要落到 true，否则升级后那两个浮动按钮还在
       hideFloats: typeof l.hideFloats === 'boolean' ? l.hideFloats : DEFAULTS.layout.hideFloats,
     },
     theme: r.theme === 'light' || r.theme === 'dark' ? r.theme : 'auto',

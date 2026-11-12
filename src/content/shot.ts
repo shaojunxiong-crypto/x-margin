@@ -32,7 +32,7 @@ const CLOSE =
 
 const CSS = `
 /* 按钮是推文底部操作栏 [role=group] 里的一个 flex item，跟着「收藏 / 分享」排，
-   不再绝对定位，也就不需要跟 X 的重渲染同步坐标。常显（v0.1.45：主人要求一直显示）。 */
+   不做绝对定位，也就不需要跟 X 的重渲染同步坐标。常显。 */
 .xm-shot{flex:none;width:${SIZE}px;height:${SIZE}px;box-sizing:border-box;
   padding:0;border:0;border-radius:9999px;background:transparent;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
@@ -44,7 +44,7 @@ const CSS = `
 .xm-shot svg{display:block;width:19px;height:19px}
 /* 截图期间：按钮本身、以及它的 hover 底色一律不出现 */
 html.xm-shotting .xm-shot{opacity:0!important;pointer-events:none!important}
-/* 自己的提示条也在视口里 —— 不藏掉就会被拍进长图的接缝处（v0.1.44 实测：黄色色带上多了一条黑胶囊） */
+/* 自己的提示条也在视口里，不藏掉会被拍进长图的接缝处 */
 html.xm-shotting .xm-shot-tip{opacity:0!important}
 html.xm-shotting,html.xm-shotting *{scroll-behavior:auto!important}
 
@@ -318,8 +318,8 @@ async function shoot(art: HTMLElement): Promise<void> {
     let ctx: CanvasRenderingContext2D | null = null;
     let scale = 1;
 
-    // 每段多滚 LEAD 像素：滚动后帧顶那一行是「脏」的（合成器还没画满），
-    // 直接按 frame(0) 裁，接缝处会留一条 1px 黑线（v0.1.44 实测）。
+    // 每段多滚 LEAD 像素：滚动后帧顶那一行是脏的（合成器还没画满），
+    // 直接按 frame(0) 裁会在接缝处留一条 1px 黑线。
     const LEAD = 3;
     while (done < height) {
       const target = Math.max(0, offset + done - LEAD);
@@ -374,10 +374,9 @@ async function shoot(art: HTMLElement): Promise<void> {
   } finally {
     document.title = prevTitle;
     // 回滚必须是瞬时的：X 给 html 设了 scroll-behavior:smooth，
-    // 直接 scrollTo 会被动画接管，调用返回时位置还在半路（v0.1.45 实测 after=2284 而非 0）。
+    // 直接 scrollTo 会被动画接管，函数返回时位置还在半路。
     html.style.setProperty('scroll-behavior', 'auto', 'important');
-    // 改完样式必须先把布局读一次：浏览器在这一帧里仍按旧的 smooth 处理 scrollTo，
-    // 滚动变成动画，函数返回时位置还停在起点（v0.1.45 实测 after=2284）。
+    // 改完样式必须先把布局读一次：这一帧里浏览器仍按旧的 smooth 处理 scrollTo。
     void html.offsetHeight;
     if (scroller) scroller.scrollTop = prevScroll;
     else window.scrollTo(0, prevScroll);
@@ -431,7 +430,7 @@ function ensureOverlay(): void {
 /**
  * 主按钮的文字色按强调色的亮度二选一。
  * ⛔ 不能用 --xm-ui-on：那是「开关打开」的底色（深色主题下是 15% 白），
- * 直接当文字色会变成浅灰压蓝底，几乎看不见（v0.1.44 截图复核发现）。
+ * 当文字色会变成浅灰压蓝底，几乎看不见。
  */
 function inkFor(): string {
   const hex = getComputedStyle(document.documentElement).getPropertyValue('--xm-acc').trim() || '#1d9bf0';

@@ -10,7 +10,7 @@ const LAST_KEY = 'xm:last-shader';
 /**
  * 背景层：固定全屏铺在 X 的内容之下。
  * WebGL 着色器（半分辨率、跟随刷新率、持续掉帧降到 30fps、隐藏时暂停）或自定义图片。
- * 与 B 站版的差别：没有液态玻璃透镜、没有汇流叠层、没有开场动画——那些都依赖站点自己的 DOM 结构。
+ * 不做液态玻璃透镜与开场动画 —— 它们依赖站点自己的 DOM 结构。
  */
 export class BackgroundLayer {
   readonly el = document.createElement('div');

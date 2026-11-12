@@ -3,7 +3,8 @@ import { ACCENTS, BG_IMAGE_KEY, cleanFont, cleanHex, SHADERS } from '../shared/s
 import { SHADER_NAMES } from './bg/shaders';
 import { compressImage } from './bg/background';
 import { shaderThumb } from './bg/program';
-import { applyAccent, railItems } from './skin';
+import { railItems } from './rail';
+import { applyAccent } from './theming';
 import { themeStuck } from './theme';
 
 interface PanelOptions {
@@ -27,10 +28,7 @@ const GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 const CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
   + 'stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
-/**
- * 面板配色全部走 CSS 变量（--xm-ui-*），由 skin.applySkin 按 X 实际主题写入。
- * 早先写死深色，浅色主题下是一块突兀的黑板，这里改掉。
- */
+/** 面板配色走 CSS 变量（--xm-ui-*），由 theming.applySkin 按 X 实际主题写入 */
 const CSS = `
 .xm-root{--xm-acc:#1d9bf0}
 .xm-fab{position:fixed;right:18px;bottom:96px;z-index:2147483000;width:46px;height:46px;border-radius:15px;
@@ -43,8 +41,8 @@ const CSS = `
 .xm-fab svg{display:block;width:23px;height:23px}
 .xm-fab[data-open="1"]{color:var(--xm-acc)}
 /* 进入图标栏后跟 X 自己的导航项同尺寸同形状：52px 正圆、无边框无阴影。
-   定位用 fixed 钉在窗口左下角，不再挂进 nav —— 那条路依赖 X 的账户按钮容器，
-   而该容器在账户按钮隐藏后会塌陷/裁切（v0.1.40 实机反馈：隐藏了头像，齿轮也跟着不见了）。
+   定位用 fixed 钉在窗口左下角，不挂进 nav —— 那条路依赖 X 的账户按钮容器，
+   而该容器在账户按钮隐藏后会塌陷或裁切，齿轮会跟着一起消失。
    fixed 只认视口：左侧栏固定 76px，齿轮 52px，居中即 left 12px；底部留 16px。
    父级 .xm-root 没有任何 transform/filter，不会破坏 fixed 的包含块。 */
 .xm-fab[data-rail="1"]{position:fixed;left:12px;bottom:16px;right:auto;top:auto;margin:0;width:52px;height:52px;
@@ -532,10 +530,10 @@ export function createPanel(opts: PanelOptions): PanelApi {
     toggle(false);
   }, true);
 
-  /** 图标栏开着就把齿轮钉在窗口左下角（与图标列同一竖线），否则退回右下角浮动球。
-   *  ⛔ 不再把齿轮塞进 `header nav`：那条路要借「账户头像」那个吸底容器定位，
-   *  而账户按钮已被隐藏，容器会塌陷/被 overflow 裁切，实机表现是齿轮跟着一起消失。
-   *  现在只改 data-rail，位置由 CSS 的 fixed 决定，跟 X 的任何结构变动都无关。 */
+  /**
+   * 图标栏开着时齿轮钉在窗口左下角（与图标列同一条竖线），否则退回右下角浮动球。
+   * 位置完全由 CSS 的 fixed 决定，不借 X 的任何容器 —— 借了就会在 X 重渲染时一起消失。
+   */
   function place(railOn: boolean): void {
     fab.dataset.rail = railOn ? '1' : '0';
     root.dataset.rail = railOn ? '1' : '0';

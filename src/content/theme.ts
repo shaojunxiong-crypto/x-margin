@@ -1,18 +1,16 @@
 /**
- * 主题切换：X 在 web 端把外观口径放在 `night_mode` cookie 里 ——
- *   0 = 白色（默认）、1 = 暗黑（#15202b 深蓝灰）、2 = 昏暗（纯黑）
- * 账号设置页改外观时写的就是这一个 cookie，客户端重新读取后整站换色。
- * 所以扩展这边只需要「写对值 + 刷新」，不必去覆盖 X 成千上万条内联颜色。
+ * 主题切换：X 把外观口径放在 `night_mode` cookie 里（0 白 / 1 深蓝灰 / 2 纯黑），
+ * 扩展只需写对值 + 刷新，不必覆盖 X 的内联颜色。
  *
- * 两处讲究：
- * 1. 同名 cookie 可能同时存在 host-only（x.com）和 domain（.x.com）两份，
- *    document.cookie 读到哪份不确定 ⇒ 写之前先把两份都删掉，只留一份。
- * 2. X 若在被账号设置反向覆盖，刷新后会回到原值，死循环。用 sessionStorage
- *    记「这个值已经试过」，同一个值只刷一次，宁可停在原样也不无限刷新。
+ * 两个坑：① 同名 cookie 可能同时存在 host-only 与 domain 两份，写之前先把两份都删掉；
+ * ② 若被账号外观设置反向覆盖，刷新后会回到原值 —— 用 sessionStorage 记「已试过」，
+ * 同一个值只刷一次，宁可停在原样也不无限刷新。
  */
 
-export type ThemeChoice = 'light' | 'dark' | 'auto';
-export type Theme = 'light' | 'dark';
+import type { Theme } from './theming';
+
+export type { Theme };
+export type ThemeChoice = Theme | 'auto';
 
 const NAME = 'night_mode';
 /** 白色 = 0；纯黑（X 的「昏暗」）= 2 */

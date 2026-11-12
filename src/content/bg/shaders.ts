@@ -88,8 +88,8 @@ void main(){
   vec3 col=(u_c1*w1+u_c2*w2+u_c3*w3+u_bg*w4)/(w1+w2+w3+w4);
   gl_FragColor=vec4(col,1.);
 }`,
-  // 颗粒渐变：柔和的大块渐变 + 静态胶片颗粒
-  // v0.46：颗粒以前每帧重新随机、强度 .07，大屏上像电视雪花（B 站评论反馈），改成固定在屏幕像素上、强度减半
+  // 颗粒渐变：柔和的大块渐变 + 静态胶片颗粒。
+  // 颗粒固定在屏幕像素上、强度减半 —— 每帧重新随机在大屏上会像电视雪花。
   grain: `
 void main(){
   vec2 uv=gl_FragCoord.xy/u_res; vec2 p=vec2(uv.x*u_res.x/u_res.y, uv.y);

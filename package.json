@@ -1,10 +1,11 @@
 {
   "name": "x-margin",
-  "version": "0.1.0",
+  "version": "0.1.50",
   "private": true,
-  "description": "X MARGIN — 给 x.com 加动态背景与字体设置",
+  "description": "X MARGIN — x.com 的阅读体验重塑：背景、字体、主题、布局与推文截图",
   "type": "module",
   "scripts": {
+    "check": "tsc --noEmit",
     "build": "tsc --noEmit && node scripts/build.mjs",
     "pack": "npm run build && cd dist && rm -f ../x-margin.zip && zip -9qrX ../x-margin.zip ."
   },

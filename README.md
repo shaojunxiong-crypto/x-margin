@@ -439,13 +439,15 @@ html.xm-noscroll::-webkit-scrollbar,html.xm-noscroll body::-webkit-scrollbar{
 X 把 Grok 和私信两个按钮挂在 body 级的固定层里，压在时间线右下角。它们与左侧图标栏里的同名导航项长得一样，靠 `data-testid` 区分：导航项是 `AppTabBar_*`，浮动层是 `DMDrawer` / `GrokDrawer`。
 
 ```css
-html.xm-nofloat [data-testid="DMDrawer" i],
+html.xm-nofloat [data-testid="chat-drawer-root" i],
 html.xm-nofloat [data-testid="GrokDrawer" i]{display:none!important}
 ```
 
 `i` 标志不是可选的：X 不同版本一个写 `DMDrawer`、一个写 `dmDrawer`，写死大小写跨版本就静默失效。
 
-testid 是会改的，所以 `markFloats()` 留了一条兜底：白名单两个族**没有都命中**时才扫（5 秒一次），判据是「`aria-label` 命中语义」+「盒子真落在视口右下角」两条同时成立，命中就打 `.xm-float-hide`。只看语义会误伤 —— 图标栏的私信导航项同名（靠 `closest('header[role="banner"]')` 排除），Grok 侧栏里也有同名按钮（靠位置排除）。候选集必须含 `div[role="button"]`：X 有相当一部分「按钮」是 div + role，不是真 `<button>`。
+**这版踩到的坑：私信入口改名叫 Chat 了。** v0.1.49 只写了 `DMDrawer`，结果是 Grok 收掉、聊天气泡留着 —— 2026 版 X 把私信换成 Chat，testid 一并换成 `chat-drawer-root` / `chat-drawer-main`。现在两套都写：老结构走 `DMDrawer`，新结构走 `chat-drawer-*`。**同一个 UI 位置在两个版本里有三个不同的 testid，这类白名单必须带历史**，不能只留当下见过的那个。
+
+testid 是会改的，所以 `markFloats()` 留了一条兜底：白名单两个族**没有都命中**时才扫（5 秒一次），判据是「`aria-label` 命中语义（Messages / Chat / Grok / 私信）」+「盒子真落在视口右下角」两条同时成立，命中就打 `.xm-float-hide`。只看语义会误伤 —— 图标栏的私信导航项同名（靠 `closest('header[role="banner"]')` 排除），Grok 侧栏里也有同名按钮（靠位置排除）。候选集必须含 `div[role="button"]`：X 有相当一部分「按钮」是 div + role，不是真 `<button>`。
 
 **实测踩到的坑：节流初值写成 `0`。** `performance.now() - 0 < 5000` 会把页面加载后的前 5 秒全部挡掉 —— 那恰好是浮动层刚渲染出来的时间，于是兜底一次都没跑，现象是「开关拨了没反应，但 A 页（testid 命中）明明是好的」。初值改负数才修好。
 

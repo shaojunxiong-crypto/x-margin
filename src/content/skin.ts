@@ -310,10 +310,14 @@ html.xm-noscroll::-webkit-scrollbar,html.xm-noscroll body::-webkit-scrollbar{
   width:0!important;height:0!important;display:none!important}
 /* 右下角浮动按钮（Grok / 私信气泡）：X 把两个按钮挂在 body 级的固定层里，压在时间线右下角，
    与内容区重叠。图标栏里的同名导航项 testid 是 AppTabBar_*，这里只认 Drawer 容器，不会误伤。
-   属性值的 i 标志是必需的：X 不同版本一个写 DMDrawer、一个写 dmDrawer，写死大小写跨版本就失效。 */
+   属性值的 i 标志是必需的：X 不同版本一个写 DMDrawer、一个写 dmDrawer，写死大小写跨版本就失效。
+   ⚠ 私信在 2026 版改名成 Chat，testid 也从 DMDrawer 换成 chat-drawer-*（v0.1.49 只写 DMDrawer，
+   结果 Grok 收掉了、聊天气泡还留着）。两套都留：老版本走 DMDrawer，新版本走 chat-drawer。 */
 html.xm-nofloat [data-testid="DMDrawer" i],
-html.xm-nofloat [data-testid="GrokDrawer" i],
 html.xm-nofloat [data-testid="DMDrawerButton" i],
+html.xm-nofloat [data-testid="chat-drawer-root" i],
+html.xm-nofloat [data-testid="chat-drawer-main" i],
+html.xm-nofloat [data-testid="GrokDrawer" i],
 html.xm-nofloat [data-testid="GrokDrawerButton" i]{display:none!important}
 /* 白名单落空时的兜底：由 markFloats() 按「语义 + 右下角位置」补打标记，CSS 只认自有 class */
 html.xm-nofloat .xm-float-hide{display:none!important}
@@ -557,12 +561,13 @@ export function injectBase(): void {
   (document.head ?? document.documentElement).append(s);
 }
 
-/** 右下角浮动按钮的 testid 白名单：与 LAYOUT_CSS 里那四条规则保持同一份，改一处要同步另一处 */
-const FLOAT_SEL_DM = '[data-testid="DMDrawer" i],[data-testid="DMDrawerButton" i]';
+/** 右下角浮动按钮的 testid 白名单：与 LAYOUT_CSS 里那几条规则保持同一份，改一处要同步另一处 */
+const FLOAT_SEL_CHAT = '[data-testid="DMDrawer" i],[data-testid="DMDrawerButton" i],'
+  + '[data-testid="chat-drawer-root" i],[data-testid="chat-drawer-main" i]';
 const FLOAT_SEL_GROK = '[data-testid="GrokDrawer" i],[data-testid="GrokDrawerButton" i]';
-/** 白名单落空时按可见名认：X 给这两个按钮的 aria-label 就是 Messages / Grok。
- *  中文界面下 X 会把 Messages 本地化成「私信 / 消息」，两种都得收 —— 只写英文等于只对英文界面生效。 */
-const FLOAT_LABEL = /^(messages|direct messages?|grok|私信|消息)$/i;
+/** 白名单落空时按可见名认。Chat 那条是 2026 版：私信入口改叫 Chat，图标换成对话气泡。
+ *  中文界面下 X 会把 Messages 本地化成「私信 / 消息」，几种写法都得收 —— 只写英文等于只对英文界面生效。 */
+const FLOAT_LABEL = /^(messages|direct messages?|chat|grok|私信|消息|聊天)$/i;
 /** 兜底扫描的上次时间（ms）：见 markFloats 里的 5 秒闸门。初值必须是「很久以前」——
  *  用 0 会让页面加载后的前 5 秒全部被闸门挡掉，正是浮动层刚渲染出来的那段时间。 */
 let lastFloatScan = -1e9;
@@ -583,7 +588,7 @@ export function markFloats(on: boolean): void {
   }
   // 白名单两个族都命中就不必扫。要求「都命中」而不是「命中一个」—— 只命中一个说明这版
   // X 只给其中一个留了老 testid，另一个照样要兜底，否则会从「两个都藏」退化成「藏一个」。
-  if (document.querySelector(FLOAT_SEL_DM) && document.querySelector(FLOAT_SEL_GROK)) return;
+  if (document.querySelector(FLOAT_SEL_CHAT) && document.querySelector(FLOAT_SEL_GROK)) return;
   // 白名单失效时这条兜底会被 1.5 秒一拍的心跳反复调用：5 秒才真扫一次，
   // 满屏 aria-label 的 rect 读取虽然只强制一次布局，也不该每拍都做。
   const now = performance.now();

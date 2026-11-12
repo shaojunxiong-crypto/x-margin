@@ -1,7 +1,7 @@
 import { loadSettings, onSettings, saveSettings, type Settings } from '../shared/settings';
 import { initAnchor } from './anchor';
 import { BackgroundLayer } from './bg/background';
-import { applyFlat, clearCardWrappers, reflowCards } from './feed';
+import { applyFlat, clearCardWrappers, reflowCards, resetReflowBase, resetThreadSig } from './feed';
 import { injectFonts } from './fonts';
 import { applyLayout, markComposer, markFloats, widenInner } from './layout';
 import { createPanel, type PanelApi } from './panel';
@@ -42,6 +42,8 @@ function sync(): void {
   applyFont(s.font.choice, s.font.custom);
   applyLayout(s.layout);
   clearCardWrappers(s.layout.cardFeed);
+  resetThreadSig();
+  resetReflowBase();
   // 等一帧让 CSS 生效后再量高度
   requestAnimationFrame(() => reflowCards());
   applyFlat(true);
@@ -76,14 +78,60 @@ async function seedRail(): Promise<void> {
   }
 }
 
-/** X 改主题 / 重建节点都会冲掉我们刷过的东西，这里按心跳补扫（全部幂等） */
+/**
+ * X 改主题 / 重建节点都会冲掉我们刷过的东西。
+ * 补扫改成事件驱动：只在主栏被换掉、或主栏内有结构变动时才跑，
+ * 不再按秒全量重来 —— 逐条量几何是整轮最贵的一段，单条推文就上百个节点。
+ */
 function watch(bindWide: () => void): void {
   let lastThemeCheck = 0;
   let lastWideCheck = 0;
   let lastWideBind = 0;
-  let lastReflow = 0;
+  let scanTimer = 0;
+  let reflowDue = false;
+  let feedMo: MutationObserver | null = null;
+  let moCol: HTMLElement | null = null;
+
+  const queueReflow = (): void => { reflowDue = true; };
+
+  /** 结构变动后的补扫，150ms 合并（X 会连着插好几条 cell） */
+  const scan = (): void => {
+    if (scanTimer) return;
+    scanTimer = window.setTimeout(() => {
+      scanTimer = 0;
+      clearCardWrappers(settings.layout.cardFeed);
+      applyFlat(true);
+      if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
+      if (settings.layout.hideCompose && !document.querySelector('.xm-comp-hide')) markComposer(true);
+      if (settings.layout.hideFloats) markFloats(true);
+      ui?.place(settings.layout.railNav);
+      queueReflow();
+    }, 150);
+  };
+
+  /** 主栏换成另一个节点 = 标记全部失效，缓存与签名一起清掉再重扫 */
+  const rebind = (col: HTMLElement | null): void => {
+    if (col === moCol) return;
+    moCol = col;
+    feedMo?.disconnect();
+    feedMo = null;
+    if (!col) return;
+    resetThreadSig();
+    resetReflowBase();
+    feedMo = new MutationObserver(() => scan());
+    feedMo.observe(col, { childList: true, subtree: true });
+    scan();
+  };
+
+  // 图片解码完 / 字体就绪都会改高度，重排要跟得上，否则下面几条会叠住
+  document.addEventListener('load', (e) => {
+    if (e.target instanceof HTMLImageElement) queueReflow();
+  }, true);
+  void document.fonts?.ready.then(() => queueReflow());
+
   const tick = () => {
     const now = performance.now();
+    // 心跳只留最便宜的两件事：主题、齿轮有没有被冲掉
     if (now - lastThemeCheck > 1500) {
       lastThemeCheck = now;
       const t = resolveTheme(settings.theme, detectTheme());
@@ -93,25 +141,20 @@ function watch(bindWide: () => void): void {
         const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
         if (col && col.parentElement && col.parentElement.style.backgroundColor !== 'transparent') {
           applySkin(theme, true, settings.bg.glass, settings.softText, settings.layout.cardFeed);
+          queueReflow();
         }
       }
-      clearCardWrappers(settings.layout.cardFeed);
-      applyFlat(true);
-      if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
-      if (settings.layout.hideCompose && !document.querySelector('.xm-comp-hide')) markComposer(true);
-      if (settings.layout.hideFloats) markFloats(true);
-      // X 重渲染 nav 会把齿轮一起清掉
       ui?.place(settings.layout.railNav);
     }
-    // 图片加载完会改 cell 高度，重排要跟得上，否则下面几条会叠住
-    if (settings.layout.cardFeed && now - lastReflow > 500) {
-      lastReflow = now;
-      reflowCards();
-    }
-    // 主栏被整体换掉时观察器会失效，这里定期验连接性；补扫交给 MutationObserver
+    // 主栏身份变化：一次 querySelector，代价可忽略
     if (now - lastWideBind > 300) {
       lastWideBind = now;
+      rebind(document.querySelector<HTMLElement>('[data-testid="primaryColumn"]'));
       bindWide();
+    }
+    if (reflowDue && settings.layout.cardFeed) {
+      reflowDue = false;
+      reflowCards();
     }
     if (settings.layout.feedWidth !== 600 && now - lastWideCheck > 4000) {
       lastWideCheck = now;
@@ -169,7 +212,7 @@ async function boot(): Promise<void> {
     });
   };
   addEventListener('scroll', scheduleReflow, { passive: true, capture: true });
-  addEventListener('resize', scheduleReflow, { passive: true });
+  addEventListener('resize', () => { resetThreadSig(); scheduleReflow(); }, { passive: true });
 
   // ---- 加宽层补扫 ----
   // 主栏内部一重建，那几层 600px 的 max-width 就回来了；盯 childList 比定时轮询快得多。

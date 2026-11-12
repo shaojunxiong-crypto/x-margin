@@ -23,6 +23,27 @@ const flatLines = new Map<HTMLElement, string>();
 /** 抹透过的底板原值 */
 const cardWrappers = new Map<HTMLElement, PrevBg>();
 
+/**
+ * 已处理过的节点。X 的虚拟列表每次回退 / 滚动都会整块重建 DOM，
+ * 重扫的意义只在「新增的那些」；对老节点重复跑几何是纯浪费 ——
+ * 单条推文就有上百个 div，40 条一轮就是四千多次布局读取。
+ * 用 WeakSet 天然跟随节点回收，不会泄漏。
+ */
+let seenArt = new WeakSet<HTMLElement>();
+let seenText = new WeakSet<HTMLElement>();
+let seenPhoto = new WeakSet<HTMLElement>();
+let seenSeed = new WeakSet<HTMLElement>();
+/** article → 它所在的 cell，省掉每轮 closest + 量宽度 */
+const cellByArt = new WeakMap<HTMLElement, HTMLElement>();
+
+/** WeakSet 没有 clear，关掉卡片模式后要重新标记，只能整组换新 */
+function resetSeen(): void {
+  seenArt = new WeakSet();
+  seenText = new WeakSet();
+  seenPhoto = new WeakSet();
+  seenSeed = new WeakSet();
+}
+
 function wipeFlatLine(el: HTMLElement): void {
   if (!flatLines.has(el)) flatLines.set(el, el.style.getPropertyValue('border-bottom'));
   if (el.style.getPropertyValue('border-bottom') !== '0 solid transparent') {
@@ -185,6 +206,14 @@ export function markNoise(): void {
 
 /** 线程扫描的限频时间戳（applyFlat 会被悬停、心跳反复调用） */
 let lastThreadScan = -1e9;
+/** 上一次扫描时的「拓扑签名」：cell 数 + 总高度。没变就说明分组不会变，不必重量。 */
+let threadSig = '';
+
+/** 主栏被整棵换掉时清掉签名，强制下一轮重扫 */
+export function resetThreadSig(): void {
+  threadSig = '';
+  lastThreadScan = -1e9;
+}
 
 interface ThreadLink {
   up: boolean;
@@ -209,13 +238,23 @@ export function markThreads(): void {
   if (!col) return;
   // 裁切只在卡片模式下存在，没开卡片就不用分组
   if (!document.documentElement.classList.contains('xm-card')) return;
+  // 高度 0 的是被隐藏的推广 / 折叠项：不占位，也不该把回复链断开
+  const cells: HTMLElement[] = [];
+  let sum = 0;
+  for (const c of col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]')) {
+    const h = c.offsetHeight;
+    if (h === 0) continue;
+    cells.push(c);
+    sum += h;
+  }
+  // 拓扑签名：数量 + 总高度。滚动时 X 只改 translateY、不改高度，签名稳定
+  const sig = `${cells.length}|${Math.round(sum)}`;
+  if (sig === threadSig) return;
   // 逐条量几何是整轮里最贵的一段，鼠标悬停会反复触发 applyFlat，这里限频
   const now = performance.now();
   if (now - lastThreadScan < 800) return;
   lastThreadScan = now;
-  // 高度 0 的是被隐藏的推广 / 折叠项：不占位，也不该把回复链断开
-  const cells = Array.from(col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]'))
-    .filter((c) => c.offsetHeight > 0);
+  threadSig = sig;
   const links = cells.map((c): ThreadLink | null => {
     const art = topTweetOf(c);
     return art ? threadLink(art, c) : null;
@@ -326,6 +365,9 @@ export function applyFlat(on: boolean): void {
       else el.style.removeProperty('border-bottom');
     }
     flatLines.clear();
+    resetSeen();
+    resetThreadSig();
+    resetReflowBase();
     return;
   }
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
@@ -337,11 +379,17 @@ export function applyFlat(on: boolean): void {
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
   const arts = [...col.querySelectorAll<HTMLElement>('article')].filter((a) => !a.parentElement?.closest('article'));
 
-  // 1) 分割线：从 cell 一路清到主栏
+  // 1) 分割线：从 cell 一路清到主栏。cell 只认一次，之后走缓存
   arts.forEach((a) => {
-    const cell = cellOf(a, col, cw);
-    if (!cell) return;
+    let cell = cellByArt.get(a);
+    if (!cell || !cell.isConnected) {
+      cell = cellOf(a, col, cw) ?? undefined;
+      if (!cell) return;
+      cellByArt.set(a, cell);
+    }
     cell.classList.add(FLAT_CELL_CLS);
+    if (seenArt.has(a)) return;
+    seenArt.add(a);
     for (let el: HTMLElement | null = cell; el && el !== col; el = el.parentElement) wipeFlatLine(el);
   });
 
@@ -356,6 +404,8 @@ export function applyFlat(on: boolean): void {
   // 2b) 没有嵌套 article 的引用结构：用「含 User-Name + 圆角 + 宽度 ≥150px」认定卡片容器。
   //     半径上限 100 挡头像（9999px），宽度下限挡小圆标。
   col.querySelectorAll<HTMLElement>('[data-testid="tweetText"]').forEach((node) => {
+    if (seenText.has(node)) return;
+    seenText.add(node);
     let el: HTMLElement | null = node.parentElement;
     for (let i = 0; el && el !== col && i < 10; i++, el = el.parentElement) {
       if (el.tagName === 'ARTICLE') break;
@@ -370,6 +420,8 @@ export function applyFlat(on: boolean): void {
 
   // 3) 内嵌图片：圆角画在 <a> 与外层 div 上，从 tweetPhoto 往上标记
   col.querySelectorAll<HTMLElement>('[data-testid="tweetPhoto"]').forEach((node) => {
+    if (seenPhoto.has(node)) return;
+    seenPhoto.add(node);
     let el: HTMLElement | null = node;
     for (let i = 0; el && el !== col && i < 12; i++, el = el.parentElement) {
       if (el.tagName === 'ARTICLE' || el.classList.contains(QUOTE_CLS)) break;
@@ -384,6 +436,8 @@ export function applyFlat(on: boolean): void {
       ' article [data-testid^="card."], article [data-testid^="video"], article [data-testid="tweetPhoto"]',
   );
   seeds.forEach((seed) => {
+    if (seenSeed.has(seed)) return;
+    seenSeed.add(seed);
     const selfSize = seed.getBoundingClientRect();
     const painted = seed.tagName === 'IMG' || seed.tagName === 'VIDEO'
       || (seed.getAttribute('style') || '').includes('background-image');
@@ -412,8 +466,20 @@ export function applyFlat(on: boolean): void {
 const TY_RE = /translateY\((-?[\d.]+)px\)/;
 
 /**
+ * 重排基准。只在主栏被换成另一个节点时重取 ——
+ * 若每轮都读 cells[0] 的当前 translateY，X 的滚动锚定一改首项，整列就被带着平移一次，
+ * 表现成「回到首页后画面不停上下跳」。
+ */
+let baseCol: HTMLElement | null = null;
+let baseY = 0;
+
+export function resetReflowBase(): void {
+  baseCol = null;
+}
+
+/**
  * 重排虚拟列表：改成卡片后 cell 变高，而 X 把每条的 translateY 写死在行内，不会重算。
- * 按 DOM 顺序累加 offsetHeight 逐条重写，第一条的原始 Y 作基准，保证整条时间线不整体位移。
+ * 按 DOM 顺序累加 offsetHeight 逐条重写，基准锁定，保证整条时间线不整体位移。
  */
 export function reflowCards(): void {
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
@@ -421,8 +487,12 @@ export function reflowCards(): void {
   const cells = Array.from(col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]'));
   if (cells.length < 2) return;
 
-  const m0 = TY_RE.exec(cells[0].style.transform || '');
-  const base = m0 ? parseFloat(m0[1]) : 0;
+  if (baseCol !== col || !baseCol.isConnected) {
+    const m0 = TY_RE.exec(cells[0].style.transform || '');
+    baseY = m0 ? parseFloat(m0[1]) : 0;
+    baseCol = col;
+  }
+  const base = baseY;
   let acc = base;
   let moved = 0;
   for (const c of cells) {

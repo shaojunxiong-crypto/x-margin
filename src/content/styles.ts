@@ -81,12 +81,12 @@ html.xm-card [data-testid="primaryColumn"]{
   border-right:0!important;
 }
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]{
-  clip-path:inset(var(--xm-card-gap,12px) var(--xm-card-x,0px) var(--xm-card-gap,12px) var(--xm-card-x,0px) round var(--xm-card-r,0px))!important;
+  clip-path:inset(var(--xm-card-gap,15px) var(--xm-card-x,0px) var(--xm-card-gap,15px) var(--xm-card-x,0px) round var(--xm-card-r,0px))!important;
   background-color:var(--xm-card-bg,rgba(255,255,255,.055))!important;
 }
 html.xm-card [data-testid="primaryColumn"] article[data-testid="tweet"]{
-  padding-top:var(--xm-card-pad,22px)!important;
-  padding-bottom:var(--xm-card-pad,22px)!important;
+  padding-top:var(--xm-card-pad,19px)!important;
+  padding-bottom:var(--xm-card-pad,19px)!important;
 }
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]>div,
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]>div>div,

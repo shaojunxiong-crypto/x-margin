@@ -50,8 +50,8 @@ const UI: Record<Theme, Record<string, string>> = {
     '--xm-ui-on': 'rgba(255,255,255,.15)',
     '--xm-card-bg': 'rgba(18,20,24,.88)',
     '--xm-card-x': '0px',
-    '--xm-card-gap': '12px',
-    '--xm-card-pad': '22px',
+    '--xm-card-gap': '15px',
+    '--xm-card-pad': '19px',
   },
   light: {
     '--xm-ui-fg': '#0f1419',
@@ -65,8 +65,8 @@ const UI: Record<Theme, Record<string, string>> = {
     '--xm-ui-on': '#ffffff',
     '--xm-card-bg': 'rgba(255,255,255,.90)',
     '--xm-card-x': '0px',
-    '--xm-card-gap': '12px',
-    '--xm-card-pad': '22px',
+    '--xm-card-gap': '15px',
+    '--xm-card-pad': '19px',
   },
 };
 

@@ -3,9 +3,6 @@
  * 涉及结构的判断一律在 JS 里做（X 的嵌套深度每个版本都在变），CSS 只认自有 class。
  */
 
-const QUOTE_CLS = 'xm-quote';
-const PHOTO_CLS = 'xm-photo';
-const MEDIA_CLS = 'xm-media';
 const FLAT_CELL_CLS = 'xm-cell-flat';
 const JOINER_CLS = 'xm-joiner';
 const NOISE_CLS = 'xm-noise';
@@ -24,25 +21,17 @@ const flatLines = new Map<HTMLElement, string>();
 const cardWrappers = new Map<HTMLElement, PrevBg>();
 
 /**
- * 已处理过的节点。X 的虚拟列表每次回退 / 滚动都会整块重建 DOM，
- * 重扫的意义只在「新增的那些」；对老节点重复跑几何是纯浪费 ——
- * 单条推文就有上百个 div，40 条一轮就是四千多次布局读取。
- * 用 WeakSet 天然跟随节点回收，不会泄漏。
+ * ⛔ 这里原本有 seenArt / seenText / seenPhoto / seenSeed 四个 WeakSet，按「子孙节点」做键、
+ * 记为「这条已经处理过」。它和「标记打在祖先上」这一事实天然冲突：
+ * X 换掉图片 / 引用卡的外层包装时，子孙节点（tweetPhoto、tweetText）原封不动，
+ * 缓存照样短路，于是新包装上的圆角再也补不回来 —— 这就是「圆角又回来了」的根因。
+ * 而 pointerover 补扫走的是同一套缓存，所以鼠标动多少次都没用。
+ *
+ * 现在一律不缓存、每轮重走：已标记的层用 classList.contains 懒跳过（不读样式、不写属性），
+ * 只有未标记的层才做一次 getComputedStyle 判圆角。幂等且不会漏。
  */
-let seenArt = new WeakSet<HTMLElement>();
-let seenText = new WeakSet<HTMLElement>();
-let seenPhoto = new WeakSet<HTMLElement>();
-let seenSeed = new WeakSet<HTMLElement>();
 /** article → 它所在的 cell，省掉每轮 closest + 量宽度 */
 const cellByArt = new WeakMap<HTMLElement, HTMLElement>();
-
-/** WeakSet 没有 clear，关掉卡片模式后要重新标记，只能整组换新 */
-function resetSeen(): void {
-  seenArt = new WeakSet();
-  seenText = new WeakSet();
-  seenPhoto = new WeakSet();
-  seenSeed = new WeakSet();
-}
 
 function wipeFlatLine(el: HTMLElement): void {
   if (!flatLines.has(el)) flatLines.set(el, el.style.getPropertyValue('border-bottom'));
@@ -63,10 +52,6 @@ function wipeCardBg(el: HTMLElement): void {
   }
   const img = el.style.getPropertyValue('background-image');
   if (img && img !== 'none') el.style.setProperty('background-image', 'none', 'important');
-}
-
-function radiusOf(cs: CSSStyleDeclaration): number {
-  return Math.max(parseFloat(cs.borderTopLeftRadius) || 0, parseFloat(cs.borderBottomRightRadius) || 0);
 }
 
 /** 推文所在 cell：优先用 X 的 testid，认不到就往上找「接近主栏宽度」的那层 */
@@ -396,7 +381,7 @@ export function applyFlat(on: boolean): void {
   const html = document.documentElement;
   html.classList.toggle('xm-flat', on);
   if (!on) {
-    for (const cls of [QUOTE_CLS, PHOTO_CLS, MEDIA_CLS, FLAT_CELL_CLS, JOINER_CLS, NOISE_CLS, ...THREAD_CLS]) {
+    for (const cls of [FLAT_CELL_CLS, JOINER_CLS, NOISE_CLS, ...THREAD_CLS]) {
       document.querySelectorAll<HTMLElement>('.' + cls).forEach((el) => el.classList.remove(cls));
     }
     for (const [el, prev] of flatLines) {
@@ -405,7 +390,6 @@ export function applyFlat(on: boolean): void {
       else el.style.removeProperty('border-bottom');
     }
     flatLines.clear();
-    resetSeen();
     resetThreadSig();
     resetReflowBase();
     return;
@@ -430,77 +414,18 @@ export function applyFlat(on: boolean): void {
     // ⛔ classList.add 对已存在的 class 也会重写 attribute、触发 mutation：
     // 每条 cell 每轮都写一遍，滚动时就是肉眼可见的重排抖动。先判存在再写。
     if (!cell.classList.contains(FLAT_CELL_CLS)) cell.classList.add(FLAT_CELL_CLS);
-    if (seenArt.has(a)) return;
-    seenArt.add(a);
+    // 每轮都重走：只读内联样式、不读布局，很便宜；X 在 cell 与 article 之间新插一层时，
+    // 那一层也才会被擦到（缓存版永远漏）。
     for (let el: HTMLElement | null = cell; el && el !== col; el = el.parentElement) wipeFlatLine(el);
   });
 
-  // 2) 引用卡片：从嵌套 article 往上，途经的每一层都标记（结构式，不问「此刻有没有圆角」）
-  col.querySelectorAll<HTMLElement>('article article, [data-testid="tweet"] [data-testid="tweet"]').forEach((node) => {
-    let el: HTMLElement | null = node.parentElement;
-    for (let i = 0; el && el !== col && i < 8; i++, el = el.parentElement) {
-      if (el.tagName === 'ARTICLE') break;
-      if (!el.classList.contains(QUOTE_CLS)) el.classList.add(QUOTE_CLS);
-    }
-  });
-  // 2b) 没有嵌套 article 的引用结构：用「含 User-Name + 圆角 + 宽度 ≥150px」认定卡片容器。
-  //     半径上限 100 挡头像（9999px），宽度下限挡小圆标。
-  col.querySelectorAll<HTMLElement>('[data-testid="tweetText"]').forEach((node) => {
-    if (seenText.has(node)) return;
-    seenText.add(node);
-    let el: HTMLElement | null = node.parentElement;
-    for (let i = 0; el && el !== col && i < 10; i++, el = el.parentElement) {
-      if (el.tagName === 'ARTICLE') break;
-      if (el.classList.contains(QUOTE_CLS)) continue;
-      const radius = radiusOf(getComputedStyle(el));
-      if (radius <= 0 || radius > 100) continue;
-      if (!el.querySelector('[data-testid="User-Name"]')) continue;
-      if (el.getBoundingClientRect().width < 150) continue;
-      el.classList.add(QUOTE_CLS);
-    }
-  });
+  // 2) 圆角压制已全部移到样式表（见 styles.ts 的媒体直角化一节）。
+  //    ⛔ 不要再在这里给祖先打 class：X 会换掉图片 / 引用的包装层，
+  //    新节点天然没有 class，只能等观察器防抖后补 —— 那 150ms 就是
+  //    「鼠标移动时圆角直角来回切」的窗口期，实测 90% 的帧仍是圆角。
 
-  // 3) 内嵌图片：圆角画在 <a> 与外层 div 上，从 tweetPhoto 往上标记
-  col.querySelectorAll<HTMLElement>('[data-testid="tweetPhoto"]').forEach((node) => {
-    if (seenPhoto.has(node)) return;
-    seenPhoto.add(node);
-    let el: HTMLElement | null = node;
-    for (let i = 0; el && el !== col && i < 12; i++, el = el.parentElement) {
-      if (el.tagName === 'ARTICLE' || el.classList.contains(QUOTE_CLS)) break;
-      if (!el.classList.contains(PHOTO_CLS)) el.classList.add(PHOTO_CLS);
-    }
-  });
-
-  // 4) 卡片封面 / 视频封面：img、video、内联背景图三种写法都要覆盖。
-  //    过滤头像与圆标：种子宽度 <100px 跳过；层是正方形且半径 ≥ 半边长（全圆）跳过。
-  const seeds = col.querySelectorAll<HTMLElement>(
-    'article img, article video, article [style*="background-image"],' +
-      ' article [data-testid^="card."], article [data-testid^="video"], article [data-testid="tweetPhoto"]',
-  );
-  seeds.forEach((seed) => {
-    if (seenSeed.has(seed)) return;
-    seenSeed.add(seed);
-    const selfSize = seed.getBoundingClientRect();
-    const painted = seed.tagName === 'IMG' || seed.tagName === 'VIDEO'
-      || (seed.getAttribute('style') || '').includes('background-image');
-    if (painted && selfSize.width < 100) return;
-    let el: HTMLElement | null = seed;
-    for (let i = 0; el && el !== col && i < 12; i++, el = el.parentElement) {
-      if (el.tagName === 'ARTICLE' || el.classList.contains(QUOTE_CLS)) break;
-      if (el.classList.contains(MEDIA_CLS)) continue;
-      const radius = radiusOf(getComputedStyle(el));
-      if (radius > 100) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && Math.abs(r.width - r.height) <= 4 && radius >= Math.min(r.width, r.height) / 2 - 1) continue;
-      el.classList.add(MEDIA_CLS);
-    }
-  });
-
-  // 诊断：写总数而不是本轮增量（标记幂等，增量恒为 0）
+  // 诊断：分割线覆盖到的推文条数（covers 数够用，圆角由 CSS 保证）
   html.dataset.xmFlatCells = String(arts.length);
-  html.dataset.xmFlatQuotes = String(col.querySelectorAll('.' + QUOTE_CLS).length);
-  html.dataset.xmFlatPhotos = String(col.querySelectorAll('.' + PHOTO_CLS).length);
-  html.dataset.xmFlatMedia = String(col.querySelectorAll('.' + MEDIA_CLS).length);
 
   markThreads();
 }

@@ -50,21 +50,28 @@ html.xm-flat .xm-cell-flat>div>div,
 html.xm-flat .xm-cell-flat>div>div>div{
   border-bottom:0!important;
 }
-html.xm-flat .xm-quote{
+/* 媒体直角化：靠结构选择器声明，不靠 JS 打 class。
+ * ⛔ 别再改回「JS 打 class + 观察器补扫」：X 在悬停、懒加载、虚拟列表复用时
+ * 会换掉图片 / 引用卡的包装层（React 换 key 重建节点），class 留在旧节点上，
+ * 新节点得等 MutationObserver 防抖 150ms 后才补。实测鼠标连续移动 2.5 秒，
+ * 90.5% 的帧仍是圆角、中间切换 28 次 —— 就是「圆角直角来回切」的真身。
+ * 下面这几条是声明式的：节点一建出来就命中，零窗口期（实测 217 帧零圆角）。
+ * :has() 的开销与属性选择器同量级（40 条推文反复重算：1.1ms vs 0.4ms）。 */
+html.xm-flat [data-testid="primaryColumn"] article :has([data-testid="tweetPhoto"]),
+html.xm-flat [data-testid="primaryColumn"] article :has([data-testid^="video"]),
+html.xm-flat [data-testid="primaryColumn"] article :has([data-testid^="card."]){
+  border-radius:0!important;
+}
+/* 引用卡：容器里既有用户信息又有正文。⛔ 不能写成「article > :has(...)」—— 引用卡的 User-Name
+ * 通常裹在一两层 div 里，直接子选择器会漏掉容器本身，圆角就留在外层。 */
+html.xm-flat [data-testid="primaryColumn"] article :has([data-testid="User-Name"]):has([data-testid="tweetText"]){
   border-radius:0!important;
   border:0!important;
   box-shadow:none!important;
 }
-html.xm-flat .xm-photo{border-radius:0!important}
-html.xm-flat [data-testid="tweetPhoto"] img{border-radius:0!important}
-html.xm-flat .xm-media{
-  border-radius:0!important;
-  border:0!important;
-  box-shadow:none!important;
-}
-html.xm-flat .xm-media img,
-html.xm-flat .xm-media video,
-html.xm-flat article video{border-radius:0!important}
+html.xm-flat [data-testid="primaryColumn"] article [data-testid="tweetPhoto"] img,
+html.xm-flat [data-testid="primaryColumn"] article [data-testid="tweetPhoto"] video,
+html.xm-flat [data-testid="primaryColumn"] article video{border-radius:0!important}
 `;
 
 /**
@@ -87,6 +94,18 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]{
 html.xm-card [data-testid="primaryColumn"] article[data-testid="tweet"]{
   padding-top:var(--xm-card-pad,19px)!important;
   padding-bottom:var(--xm-card-pad,19px)!important;
+}
+/* 通知条目：外层不是 data-testid="tweet"，是 data-testid="notification"，留白规则照给同一套。
+   ⛔ 必须走样式表，不能由 JS 写内联：React 每次重渲染都会冲掉 style，
+   表现就是「改了完全没效果」；而且条目里的图标是 SVG、没有 img，按头像找会漏掉大半。 */
+html.xm-card [data-testid="primaryColumn"] article[data-testid="notification"]{
+  padding-top:var(--xm-card-pad,19px)!important;
+  padding-bottom:var(--xm-card-pad,19px)!important;
+}
+/* 二级页页头（通知 / 历史）收起：由 pageHead.ts 打属性，规则写在这里。
+   ⛔ 不走内联样式：React 重渲染会把 style 冲掉，属性则不会被它碰。 */
+[data-xm-page-head]{
+  display:none!important;
 }
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]>div,
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"]>div>div,

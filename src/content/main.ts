@@ -4,6 +4,7 @@ import { BackgroundLayer } from './bg/background';
 import { applyFlat, clearCardWrappers, reflowCards, resetReflowBase, resetThreadSig, setFeedFrozen } from './feed';
 import { injectFonts } from './fonts';
 import { applyLayout, markComposer, markFloats, widenInner } from './layout';
+import { markPageHead } from './pageHead';
 import { createPanel, type PanelApi } from './panel';
 import { applyRail, railItems } from './rail';
 import { initShot } from './shot';
@@ -54,6 +55,8 @@ function sync(): void {
   // 等一帧让 CSS 生效后再量高度
   requestAnimationFrame(() => reflowCards());
   applyFlat(true);
+  // 二级页页头（通知 / 历史），只在那些路由下动，切走会自动还回去
+  markPageHead();
   applyRail(s.layout.railNav, theme, s.layout.railHide, s.layout.hideCompose);
   markComposer(s.layout.hideCompose);
   // 齿轮按钮跟着图标栏在「栏内」与「浮动球」之间搬
@@ -122,6 +125,8 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
     scanTimer = window.setTimeout(() => {
       scanTimer = 0;
       applyFlat(true);
+      // 二级页页头会被 X 重建，跟着补一次（条目留白是 CSS，不在这里管）
+      markPageHead();
       if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
       if (settings.layout.hideCompose && !document.querySelector('.xm-comp-hide')) markComposer(true);
       if (settings.layout.hideFloats) markFloats(true);
@@ -282,16 +287,10 @@ async function boot(): Promise<void> {
 
   initAnchor();
 
-  // X 在 hover 后会换掉图片 / 引用卡的包装层，且替换发生在事件之后，
-  // 必须推迟一拍再扫，否则扫到的还是旧节点。
-  // ⛔ 只认 pointerover：滚动时鼠标停在页面上，pointermove 会不断触发全量扫描，
-  // 和 scan() 叠加成两路重活 —— 这正是「正常浏览反而更卡」的一半原因。
-  let hoverTimer = 0;
-  const queueFlat = (): void => {
-    if (hoverTimer) return;
-    hoverTimer = window.setTimeout(() => { hoverTimer = 0; applyFlat(true); }, 140);
-  };
-  addEventListener('pointerover', () => { if (!isScrolling()) queueFlat(); }, { passive: true });
+  // ⛔ 不再挂 pointerover / pointermove 去补扫。
+  // 那是「按症状触发」：X 换包装是 DOM 结构变化，MutationObserver 本来就看得见；
+  // 而且真正让圆角回来的不是鼠标，是 applyFlat 里按「子孙节点」做键的缓存 ——
+  // 包装被换、子孙没变，缓存照样短路，鼠标动一百次也补不回来。缓存已去掉。
 
   watch(bindWide, () => queueWide(0));
   void seedRail();

@@ -27,6 +27,8 @@ interface Rec {
 let noteTimer = 0;
 let loopTimer = 0;
 let deadline = 0;
+/** 最后一次真正发生校正的时刻：幕布用它判断「还在跳」还是「已收敛」 */
+let lastJumpAt = 0;
 
 function readAll(): Record<string, Rec> {
   try {
@@ -143,7 +145,10 @@ function step(rec: Rec): void {
   const art = findById(rec.id);
   if (art) {
     const drift = Math.round(art.getBoundingClientRect().top - rec.top);
-    if (Math.abs(drift) > DRIFT) jump(drift);
+    if (Math.abs(drift) > DRIFT) {
+      jump(drift);
+      lastJumpAt = performance.now();
+    }
   }
   // 一直盯到截止：X 自己的恢复、我们的重排都可能在我们之后才落地，纠一次不够
   loopTimer = window.setTimeout(() => step(rec), STEP_MS);
@@ -161,7 +166,20 @@ export function restoreAnchor(windowMs = WINDOW_SPA): void {
   // 超过 30 分钟的记录不再可信（内容早换了）
   if (Date.now() - (rec.at || 0) > 30 * 60 * 1000) return;
   deadline = performance.now() + windowMs;
+  // 从「刚开始就把时钟拨到起点」：幕布至少等满半个安静期，不会在第一次校正落点前就揭
+  lastJumpAt = performance.now();
   if (!loopTimer) step(rec);
+}
+
+/**
+ * 校正是否已经收敛。
+ * 幕布用它决定揭幕时机 —— 只要还有可能再跳一次（窗口内且最近 500ms 内真跳过），就继续盖着。
+ * 窗口外（如普通打开页面）恒为 true。
+ */
+export function anchorSettled(): boolean {
+  const now = performance.now();
+  if (now > deadline) return true;
+  return now - lastJumpAt > 500;
 }
 
 export function initAnchor(): void {

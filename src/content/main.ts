@@ -5,9 +5,11 @@ import { applyFlat, clearCardWrappers, reflowCards, resetReflowBase, resetThread
 import { injectFonts } from './fonts';
 import { applyLayout, markComposer, markFloats, widenInner } from './layout';
 import { markPageHead } from './pageHead';
+import { markPill } from './pill';
 import { createPanel, type PanelApi } from './panel';
 import { applyRail, railItems } from './rail';
 import { initShot } from './shot';
+import { initStage } from './stage';
 import { injectBase } from './styles';
 import { applyTheme, enforceTheme, onSystemThemeChange, reloadForTheme, resolveTheme } from './theme';
 import { applyAccent, applyFont, applySkin, detectTheme, type Theme } from './theming';
@@ -57,6 +59,8 @@ function sync(): void {
   applyFlat(true);
   // 二级页页头（通知 / 历史），只在那些路由下动，切走会自动还回去
   markPageHead();
+  // 「显示 N 帖子」提示行：按文案认出来，交给样式表做成顶栏下沿的一条带
+  markPill();
   applyRail(s.layout.railNav, theme, s.layout.railHide, s.layout.hideCompose);
   markComposer(s.layout.hideCompose);
   // 齿轮按钮跟着图标栏在「栏内」与「浮动球」之间搬
@@ -127,6 +131,7 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
       applyFlat(true);
       // 二级页页头会被 X 重建，跟着补一次（条目留白是 CSS，不在这里管）
       markPageHead();
+      markPill();
       if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
       if (settings.layout.hideCompose && !document.querySelector('.xm-comp-hide')) markComposer(true);
       if (settings.layout.hideFloats) markFloats(true);
@@ -201,6 +206,9 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
       lastWideBind = now;
       rebind(document.querySelector<HTMLElement>('[data-testid="primaryColumn"]'));
       bindWide();
+      // 提示行的显隐往往只改 display / transform，不产生 childList 变动，
+      // 观察器看不到；300ms 一次的这条路是它的兜底。
+      markPill();
     }
     if (reflowDue && settings.layout.cardFeed) {
       reflowDue = false;
@@ -221,6 +229,8 @@ async function boot(): Promise<void> {
 
   injectFonts();
   injectBase();
+  // 幕布要赶在任何 popstate 之前挂好（也赶在整页回退的首帧之前），所以紧跟样式表
+  initStage();
 
   bg = new BackgroundLayer();
   document.body.prepend(bg.el);

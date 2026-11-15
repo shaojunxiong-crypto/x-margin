@@ -189,6 +189,51 @@ export function markNoise(): void {
   if (added && html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
 }
 
+/**
+ * 「发现更多 / 源自于整个 X」：推文详情页回复列表之后那颗相关推文流的分区标。
+ * 它既不是推文也不匹配 JOINER_RE，卡片模式按 15px 裁切却不补内边距 ——
+ * 原来那两行字被削掉字头字脚，按内层结构改单行在真机上更差（层级/内边距与模拟不一致）。
+ * 现在样式表不碰内层结构：整块隐藏、cell 锁 66px、伪元素画一行居中省略号。
+ * ⛔ 属性名 data-xm-more-sec 就是样式表唯一的选择器，别在 <html> 上再用同名 dataset —
+ *   那样会把整页一起命中（v0.1.65 的 data-xm-page-head 就是这么翻车的）。
+ * ⛔ cell 高度被锁死后必须补一次 reflowCards：真机自然高度若不是 66，后面几条会错位。
+ */
+const MORE_SEC_ATTR = 'xmMoreSec';
+const MORE_SEC_RE = /^(发现更多|Discover more|もっと見る|더 보기|Show more)/i;
+
+function isMoreSection(cell: HTMLElement): boolean {
+  // 有推文正文的格子一律放行：有人在推文里写「发现更多」不算
+  if (cell.querySelector('article')) return false;
+  const h2 = cell.querySelector('h2');
+  if (!h2) return false;
+  const title = (h2.textContent || '').trim();
+  if (!title || title.length > 20 || !MORE_SEC_RE.test(title)) return false;
+  // 标题 + 副标题，整格文字很短；不做全等是因为副标题会随语种变
+  return (cell.textContent || '').trim().length <= 40;
+}
+
+/** 扫描限频：applyFlat 被悬停、心跳反复调用，每轮遍历全部 cell 没必要 */
+let lastMoreScan = -1e9;
+
+export function markMoreSection(): void {
+  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  if (!col) return;
+  const now = performance.now();
+  if (now - lastMoreScan < 600) return;
+  lastMoreScan = now;
+  let added = 0;
+  col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
+    if (cell.dataset[MORE_SEC_ATTR]) return;
+    if (!isMoreSection(cell)) return;
+    cell.dataset[MORE_SEC_ATTR] = '1';
+    added++;
+  });
+  // 样式把这一格锁成 66px，与自然高度可能差几像素；高度一改，后面几条的 translateY 就错了
+  if (added && document.documentElement.classList.contains('xm-card')) {
+    requestAnimationFrame(() => reflowCards());
+  }
+}
+
 /** 线程扫描的限频时间戳（applyFlat 会被悬停、心跳反复调用） */
 let lastThreadScan = -1e9;
 /** 上一次「已采纳」的拓扑签名：cell 数 + 总高度。没变就说明分组不会变，不必重量。 */
@@ -209,6 +254,15 @@ let frozen = false;
 
 export function setFeedFrozen(v: boolean): void {
   frozen = v;
+}
+
+/**
+ * 分组是否已落定。回退幕布用：
+ * 260ms 稳定闸门没走完就揭幕，会正好撞上「分组一改 → article 高度差 15px → 整列重排」那一下，
+ * 用户看到的就是「动画结束之后页面还在重排」。
+ */
+export function feedSettled(): boolean {
+  return pendingSig === '';
 }
 
 /** 主栏被整棵换掉时清掉签名，强制下一轮重扫 */
@@ -400,6 +454,8 @@ export function applyFlat(on: boolean): void {
   const cw = col.getBoundingClientRect().width || 0;
   // 0) 先把「可能的垃圾信息」入口藏掉，后面的分组 / 重排就不用管它
   markNoise();
+  // 0.5) 相关推文流的分区条：只打属性，高度不变，不需要重排
+  markMoreSection();
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
   const arts = [...col.querySelectorAll<HTMLElement>('article')].filter((a) => !a.parentElement?.closest('article'));
 

@@ -19,6 +19,21 @@ const BASE_CSS = `
 .xm-bg[data-soft] .xm-bg-scrim{background:var(--xm-scrim,rgba(0,0,0,.3))}
 html.xm-skin,html.xm-skin body{background-color:transparent!important}
 html.xm-skin #react-root{background-color:transparent!important}
+/* 回退换场的幕布（stage.ts 挂 data-on）。半透明 + 3px 模糊，稳定后淡出。
+   ⛔ backdrop-filter 只在 [data-on] 时才有：静止状态挂全屏模糊会常驻一层合成开销。
+   ⛔ 层级压在提示浮条(…482000)之下、面板(…483001)之下：换场时浮条与面板不该被压暗。 */
+.xm-stage{position:fixed;inset:0;z-index:2147481000;pointer-events:none;
+  contain:layout paint;
+  background:rgba(9,10,13,.6);
+  opacity:0;visibility:hidden;
+  transition:opacity .13s ease-out,visibility 0s linear .13s}
+.xm-stage[data-on="1"]{opacity:1;visibility:visible;
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+  /* ⛔ 不能淡入：淡入 130ms 里重建后的头几帧只压暗几个百分点，抖动原样透出来。
+     幕布要「瞬时出现、淡出」。撤下 data-on 时按基础规则的 .13s 过渡走，所以这里写 none 不影响淡出。 */
+  transition:none}
+/* 浅色主题不能压黑：白底忽然变灰比不动更刺眼，改成压白（洗淡） */
+html:not(.xm-dark) .xm-stage{background:rgba(250,250,250,.62)}
 `;
 
 /**
@@ -72,6 +87,24 @@ html.xm-flat [data-testid="primaryColumn"] article :has([data-testid="User-Name"
 html.xm-flat [data-testid="primaryColumn"] article [data-testid="tweetPhoto"] img,
 html.xm-flat [data-testid="primaryColumn"] article [data-testid="tweetPhoto"] video,
 html.xm-flat [data-testid="primaryColumn"] article video{border-radius:0!important}
+/* 回复 / 发帖弹层：X 给外壳 16px 圆角 + 大投影，浮在页面上跟「全局直角」明显两套语言。
+   只压外壳三档 —— role=dialog 本身、它的直接子层（居中容器）、modalDialog 及其直接子层。
+   ⛔ 绝不写 [role="dialog"] *：那会把弹层里的头像（9999px）、媒体预览、按钮一起铲平。
+   ⛔ 也不加 overflow:hidden 之外的任何改动：弹层内部排版由 X 自己算，动宽高会错位。 */
+html.xm-flat [role="dialog"],
+html.xm-flat [role="dialog"]>div,
+html.xm-flat [role="dialog"] [data-testid="modalDialog"],
+html.xm-flat [role="dialog"] [data-testid="modalDialog"]>div,
+html.xm-flat [data-testid="sheetDialog"],
+html.xm-flat [data-testid="sheetDialog"]>div{
+  border-radius:0!important;
+}
+/* 投影：原来那圈大投影是给圆角弹层做「浮起」的，去角后会把弹层糊在遮罩里，
+   换成 1px 发丝环（box-shadow 画，不占盒子、不改尺寸），与卡片的描边同一档。 */
+html.xm-flat [data-testid="modalDialog"],
+html.xm-flat [data-testid="sheetDialog"]{
+  box-shadow:0 0 0 1px var(--xm-line,rgba(128,128,128,.26))!important;
+}
 `;
 
 /**
@@ -155,6 +188,77 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
   content:"";position:absolute;top:0;bottom:0;left:var(--xm-lx,-99px);
   width:var(--xm-lw,2px);background:var(--xm-lc,transparent);pointer-events:none;
 }
+/* 「显示 N 帖子」提示行：原生那条整条不显示，改由 pill.ts 在 body 上挂一条 fixed 窄带
+   （.xm-pillbar），从顶栏下沿贴出来，点一下把点击转发给原生按钮。
+   为什么不再改原生行的外观：真机页面里还藏着一个 display:none 的
+   [data-testid="pillLabel"]，按 pillLabel 认行会把样式打到隐藏节点上
+   （v0.1.70 就是这样失效的：改造条出现在隐藏节点处，真提示行仍是品牌粉）。
+   ⛔ 原生行是绝对定位的 cell（内联 position:absolute + translateY），
+     压成 0 高不会推移后面任何一条，只是让它自己和那 36px 占位一起消失。 */
+html.xm-card [data-testid="primaryColumn"] [data-xm-pill]{
+  height:0!important;min-height:0!important;max-height:0!important;
+  padding:0!important;margin:0!important;
+  border:0!important;box-shadow:none!important;background:none!important;
+  overflow:hidden!important;clip-path:none!important;
+  opacity:0!important;visibility:hidden!important;pointer-events:none!important;
+}
+/* 「发现更多 / 源自于整个 X」小节条：推文详情页里，回复列表之后接的相关推文流分区标。
+   原来是一格「20px 标题 + 13px 副标题」的两行大字，卡片模式按 15px 裁切却不补内边距，
+   字头字脚各被削掉一截。按内层结构改成单行（div:has(>h2) 做 flex）在真机上更差 ——
+   真机里那层的内外边距、h2 与副标题的层级跟模拟的不一致，flex 落在了错的一层上，
+   文字直接顶在裁切边、被切掉半行。
+   ⇒ 现在整块不依赖内部结构：内层全部隐藏，cell 自己锁高度，只用伪元素画一行居中省略号。
+   ⛔ 高度锁 66 = 36 可视 + 上下各 15 裁切，等于量到的自然高度；
+     真机若自然高度不同，markMoreSection 打完标记会补一次 reflowCards。 */
+html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]{
+  height:66px!important;min-height:0!important;max-height:66px!important;
+  padding:0!important;margin:0!important;overflow:hidden!important;
+}
+html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]>*{display:none!important}
+/* 发丝线画在可视区上沿（裁切量 = --xm-card-gap）：9% 白在浅色下等于没有，给中灰兜底。 */
+html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]::before{
+  content:"";position:absolute;left:0;right:0;top:var(--xm-card-gap,15px);
+  height:1px;background:var(--xm-line,rgba(128,128,128,.26));pointer-events:none;
+}
+/* 一行居中的省略号：单纯表示「下面还有内容」，不带方向或折叠暗示。
+   letter-spacing 会在末尾多留一个字距，用同值 text-indent 抵掉，才真正居中。 */
+html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]::after{
+  content:"···";
+  position:absolute;left:0;right:0;top:var(--xm-card-gap,15px);
+  height:calc(66px - 2*var(--xm-card-gap,15px));
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--xm-font,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif);
+  font-size:21px;font-weight:700;line-height:1;
+  letter-spacing:.2em;text-indent:.2em;
+  color:var(--xm-ui-fg,#e7e9ea);opacity:.34;
+  pointer-events:none;
+}
+/* 浮条本体：与卡片同底色、同直角、同一条发丝线，高 36 与顶栏一致 */
+.xm-pillbar{
+  position:fixed;z-index:2147482000;left:0;top:0;width:100%;
+  height:36px;box-sizing:border-box;margin:0;padding:0;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  border:0;border-bottom:1px solid var(--xm-line,rgba(255,255,255,.09));
+  border-radius:0;
+  /* 底色必须是实色再叠卡片色：无壁纸时 --xm-card-bg 只有 6% 白，
+     单用它会让浮条下面的推文文字透上来。 */
+  background-color:#0f1013;
+  background-image:linear-gradient(var(--xm-card-bg,rgba(18,20,24,.88)),var(--xm-card-bg,rgba(18,20,24,.88)));
+  -webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2);
+  color:var(--xm-ui-fg,#e7e9ea);
+  font-family:var(--xm-font,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif);
+  font-size:13px;font-weight:600;line-height:17px;
+  cursor:pointer;-webkit-user-select:none;user-select:none;
+  opacity:0;visibility:hidden;transform:translateY(-100%);
+  transition:opacity .15s ease,transform .15s ease,visibility 0s linear .15s;
+}
+.xm-pillbar[data-on="1"]{
+  opacity:1;visibility:visible;transform:none;
+  transition:opacity .15s ease,transform .15s ease;
+}
+.xm-pillbar:hover{filter:brightness(1.08)}
+.xm-pillbar:active{transform:translateY(1px)}
+html:not(.xm-dark) .xm-pillbar{background-color:#fff}
 `;
 
 /** 字体与玻璃：字体族走 --xm-font，正文字号单独覆盖 */
@@ -192,6 +296,15 @@ html.xm-wide [data-testid="primaryColumn"]{
   flex-basis:var(--xm-feed-w,720px)!important;
 }
 html.xm-wide [data-testid="primaryColumn"] .xm-wide-el{max-width:var(--xm-feed-w,720px)!important}
+/* 加宽的兜底层：回退时 X 重建主栏，新建的那几层自带 inline max-width:600px，
+   JS 打 xm-wide-el 要等下一轮 MutationObserver —— 中间会露 1–2 帧窄布局，
+   正文重折行、所有 cell 高度变，随后又被 reflow/锚定纠正，肉眼就是「抖一下」。
+   这里按结构直接给「装着 cell 的主栏直系层」上宽度：新节点一出生就是 720，那一帧根本不存在。
+   ⛔ 只进两级、且必须含 cellInnerDiv：再深的层属于 cell 内部，动了会改变卡片布局。 */
+html.xm-wide [data-testid="primaryColumn"] > div:has([data-testid="cellInnerDiv"]),
+html.xm-wide [data-testid="primaryColumn"] > div > div:has([data-testid="cellInnerDiv"]){
+  max-width:var(--xm-feed-w,720px)!important;
+}
 /* 推广：placementTracking 是唯一稳定锚点（「Ad」只是文本）。三种嵌套都要收，整条 cell 一起藏才不留空。 */
 html.xm-noads [data-testid="cellInnerDiv"]:has([data-testid="placementTracking"]),
 html.xm-noads [data-testid="placementTracking"]:has(article[data-testid="tweet"]),

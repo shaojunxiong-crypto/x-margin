@@ -188,6 +188,17 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
   content:"";position:absolute;top:0;bottom:0;left:var(--xm-lx,-99px);
   width:var(--xm-lw,2px);background:var(--xm-lc,transparent);pointer-events:none;
 }
+/* 组尾那条只补到自己的头像下沿（--xm-le 由 feed.ts 量出）：链到此为止，
+   再往下画就是「线扎进回复正文 / 时间戳 / 操作栏」。 */
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-end::before{
+  bottom:auto;height:var(--xm-le,44px);
+}
+/* 组首同理，只是方向相反：线从头像下沿起步（--xm-ls 由 feed.ts 量出）。
+   原来 top:0 会顶到头像上方，只能靠 clip-path 那 15px 兜；详情页首条的
+   padding 比列表卡片大，兜不住，头像上方就冒出线头。 */
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-top::before{
+  top:var(--xm-ls,0px);
+}
 /* 「显示 N 帖子」提示行：原生那条整条不显示，改由 pill.ts 在 body 上挂一条 fixed 窄带
    （.xm-pillbar），从顶栏下沿贴出来，点一下把点击转发给原生按钮。
    为什么不再改原生行的外观：真机页面里还藏着一个 display:none 的
@@ -207,58 +218,83 @@ html.xm-card [data-testid="primaryColumn"] [data-xm-pill]{
    字头字脚各被削掉一截。按内层结构改成单行（div:has(>h2) 做 flex）在真机上更差 ——
    真机里那层的内外边距、h2 与副标题的层级跟模拟的不一致，flex 落在了错的一层上，
    文字直接顶在裁切边、被切掉半行。
-   ⇒ 现在整块不依赖内部结构：内层全部隐藏，cell 自己锁高度，只用伪元素画一行居中省略号。
-   ⛔ 高度锁 66 = 36 可视 + 上下各 15 裁切，等于量到的自然高度；
+   ⇒ 现在整块不依赖内部结构：内层全部隐藏，只用伪元素画一枚居中的方角小牌。
+   与提示浮块同一套语言：方角、44px、页面强调色（这里只取低透明度，做隔断不做按钮）。
+   ⛔ 高度锁 74 = 44 浮块 + 上下各 15 裁切；
      真机若自然高度不同，markMoreSection 打完标记会补一次 reflowCards。 */
 html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]{
-  height:66px!important;min-height:0!important;max-height:66px!important;
+  height:74px!important;min-height:0!important;max-height:74px!important;
   padding:0!important;margin:0!important;overflow:hidden!important;
+  /* 不铺卡片底色：这一格是「隔断」，留成一道真正的缝隙，只让中间那枚小牌浮着，
+     否则它又会变成一条横在流里的色带（与提示浮块的「小块」语言冲突）。 */
+  background-color:transparent!important;
 }
 html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]>*{display:none!important}
-/* 发丝线画在可视区上沿（裁切量 = --xm-card-gap）：9% 白在浅色下等于没有，给中灰兜底。 */
-html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]::before{
-  content:"";position:absolute;left:0;right:0;top:var(--xm-card-gap,15px);
-  height:1px;background:var(--xm-line,rgba(128,128,128,.26));pointer-events:none;
-}
-/* 一行居中的省略号：单纯表示「下面还有内容」，不带方向或折叠暗示。
+/* 省略号小牌：88×44 方角，强调色淡底 + 一圈强调色描边，居中落在可视区。
+   ⛔ 不再画贯穿整条的发丝线 —— 那条线会把它变回「一条压在流里的横带」，
+     和提示浮块的「小块」语言冲突。
    letter-spacing 会在末尾多留一个字距，用同值 text-indent 抵掉，才真正居中。 */
 html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]::after{
   content:"···";
-  position:absolute;left:0;right:0;top:var(--xm-card-gap,15px);
-  height:calc(66px - 2*var(--xm-card-gap,15px));
+  position:absolute;left:50%;top:var(--xm-card-gap,15px);
+  width:88px;height:44px;box-sizing:border-box;
+  transform:translateX(-50%);
   display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--xm-page-glow,var(--xm-acc-glow,rgba(128,128,128,.3)));
+  border-radius:0;
+  background-color:var(--xm-page-soft,var(--xm-acc-soft,rgba(128,128,128,.12)));
   font-family:var(--xm-font,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif);
-  font-size:21px;font-weight:700;line-height:1;
+  font-size:20px;font-weight:700;line-height:1;
   letter-spacing:.2em;text-indent:.2em;
-  color:var(--xm-ui-fg,#e7e9ea);opacity:.34;
+  color:var(--xm-page-acc,var(--xm-acc,#1d9bf0));
   pointer-events:none;
 }
-/* 浮条本体：与卡片同底色、同直角、同一条发丝线，高 36 与顶栏一致 */
+/* 提示浮块：取 X 自己「已发布」提示的**结构**（实心强调色 + 白字 + 左侧上行箭头 + 光晕）
+   但外形按本项目语言收成直角 —— 全站没有圆角，这里也不许有。
+   它是「有新内容」的邀约，所以做成浮在顶栏下的一小块，而不是压在内容上的横带。
+   ⛔ 强调色取 --xm-page-*（theming.ts 从 X 自己的发帖按钮 / 选中页签下划线采样），
+     不是设置里的 --xm-acc：两者可能撞色（实测页面粉 #f91880、设置紫 #7856ff），
+     浮块贴在页面里，得跟页面走。--xm-acc 只作采不到时的兜底。
+   ⛔ 外壳（.xm-pillbar）只负责定位与承载动画：满主栏宽、无底色、pointer-events:none，
+     真正的块是里面那层 .xm-pillbar-in。这样居中是靠 flex 自动算的，不用在 JS 里量宽度。 */
 .xm-pillbar{
   position:fixed;z-index:2147482000;left:0;top:0;width:100%;
-  height:36px;box-sizing:border-box;margin:0;padding:0;
-  display:flex;align-items:center;justify-content:center;gap:6px;
-  border:0;border-bottom:1px solid var(--xm-line,rgba(255,255,255,.09));
-  border-radius:0;
-  /* 底色必须是实色再叠卡片色：无壁纸时 --xm-card-bg 只有 6% 白，
-     单用它会让浮条下面的推文文字透上来。 */
-  background-color:#0f1013;
-  background-image:linear-gradient(var(--xm-card-bg,rgba(18,20,24,.88)),var(--xm-card-bg,rgba(18,20,24,.88)));
-  -webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2);
-  color:var(--xm-ui-fg,#e7e9ea);
+  height:56px;box-sizing:border-box;margin:0;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  border:0;background:none;border-radius:0;
   font-family:var(--xm-font,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif);
-  font-size:13px;font-weight:600;line-height:17px;
   cursor:pointer;-webkit-user-select:none;user-select:none;
-  opacity:0;visibility:hidden;transform:translateY(-100%);
-  transition:opacity .15s ease,transform .15s ease,visibility 0s linear .15s;
+  pointer-events:none;
+  opacity:0;visibility:hidden;
+  transition:opacity .16s ease,visibility 0s linear .16s;
 }
-.xm-pillbar[data-on="1"]{
-  opacity:1;visibility:visible;transform:none;
-  transition:opacity .15s ease,transform .15s ease;
+.xm-pillbar[data-on="1"]{opacity:1;visibility:visible;transition:opacity .16s ease}
+.xm-pillbar-in{
+  pointer-events:auto;
+  display:inline-flex;align-items:center;gap:9px;
+  height:44px;box-sizing:border-box;padding:0 20px 0 16px;
+  border-radius:0;
+  background-color:var(--xm-page-acc,var(--xm-acc,#1d9bf0));
+  color:#fff;
+  font-size:15px;font-weight:700;line-height:20px;letter-spacing:.01em;
+  box-shadow:0 6px 22px var(--xm-page-glow,var(--xm-page-soft,rgba(29,155,240,.45))),
+             0 2px 10px rgba(0,0,0,.34);
+  transform:translateY(-7px) scale(.97);
+  transition:transform .18s cubic-bezier(.2,.9,.3,1.35);
 }
-.xm-pillbar:hover{filter:brightness(1.08)}
-.xm-pillbar:active{transform:translateY(1px)}
-html:not(.xm-dark) .xm-pillbar{background-color:#fff}
+.xm-pillbar[data-on="1"] .xm-pillbar-in{transform:none}
+/* 上行箭头：和 X 的「已发布」提示同构，一眼看出是「有新内容、点它刷新」 */
+.xm-pillbar-in::before{
+  content:"↑";font-size:19px;font-weight:800;line-height:1;opacity:.96;margin-top:-1px;
+}
+.xm-pillbar:hover .xm-pillbar-in{filter:brightness(1.06)}
+.xm-pillbar:active .xm-pillbar-in{transform:scale(.975)}
+html:not(.xm-dark) .xm-pillbar-in{
+  box-shadow:0 6px 20px var(--xm-page-soft,rgba(29,155,240,.18)),0 2px 8px rgba(0,0,0,.16);
+}
+/* X 自己的「查看新帖子」浮层：和我们这颗胶囊语义完全重合，留着就是两个提示同时挂在顶上。
+   pill.ts 会给它（及其定位祖先）打 data-xm-toast，这里整块收掉。 */
+html.xm-card [data-xm-toast]{display:none!important}
 `;
 
 /** 字体与玻璃：字体族走 --xm-font，正文字号单独覆盖 */

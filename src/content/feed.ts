@@ -355,6 +355,39 @@ export function markThreads(): void {
   }
 
   let changed = false;
+
+  /**
+   * 组尾那条的线不能贯穿整格：链在这里就断了，线应当止于自己的头像下沿。
+   * 原来是 top:0 → bottom:0 画满 cell，于是线越过最后一条推文继续往下扎，
+   * 先把回复正文的左侧切开（正文若因 X 的布局落在左侧，线正好从字上穿过），
+   * 再穿过时间戳与操作栏，看起来像「竖线撕裂了文字」。
+   * 高度按几何量出来（头像底部 − cell 顶部）写进 --xm-le，交给样式表。
+   * ⛔ 只量一次、只在组尾量：组首/组中段的线本来就该贯穿整格，不能一起收。
+   */
+  const endLine = new Map<HTMLElement, number>();
+  // 组首是镜像问题：线从 top:0 起画，会顶到自己头像的上方去（详情页首条 padding 更大，
+  // clip 那 15px 兜不住）。把头像下沿相对 cell 顶的位置写进 --xm-ls，让线从头像底部起步。
+  const startLine = new Map<HTMLElement, number>();
+  // 量的时候这一格可能还没打上 thread-end 类，article 的 padding-top 还是「独立卡片」的 19，
+  // 等类打上才变成 pad−gap（4）。所以按「当前 padding → 目标 padding」做换算，
+  // 否则会多出一截（实测 59 vs 44），线还是会长过自己的头像。
+  const rootCS = getComputedStyle(document.documentElement);
+  const padVar = parseFloat(rootCS.getPropertyValue('--xm-card-pad')) || 19;
+  const gapVar = parseFloat(rootCS.getPropertyValue('--xm-card-gap')) || 15;
+  const targetPad = padVar - gapVar;
+  for (const [cell, cls] of want) {
+    if (cls !== THREAD_TOP && cls !== THREAD_END) continue;
+    const av = cell.querySelector<HTMLElement>('[data-testid="Tweet-User-Avatar"]');
+    const art = topTweetOf(cell);
+    if (!av || !art) continue;
+    const top = cell.getBoundingClientRect().top;
+    const avBottom = av.getBoundingClientRect().bottom - top;
+    const padNow = parseFloat(getComputedStyle(art).paddingTop) || 0;
+    // 组首的 padding-top 保持 pad（上侧被 clip 补回），组尾被压成 pad−gap
+    const padTarget = cls === THREAD_TOP ? padVar : targetPad;
+    const h = Math.round(avBottom - padNow + padTarget);
+    if (h > 0) (cls === THREAD_TOP ? startLine : endLine).set(cell, h);
+  }
   for (const cell of cells) {
     const next = want.get(cell) ?? '';
     for (const cls of THREAD_CLS) {
@@ -367,10 +400,18 @@ export function markThreads(): void {
       setVar(cell, '--xm-lx', `${g.x}px`);
       setVar(cell, '--xm-lw', `${g.w}px`);
       setVar(cell, '--xm-lc', g.color);
+      const le = endLine.get(cell);
+      if (le) setVar(cell, '--xm-le', `${le}px`);
+      else cell.style.removeProperty('--xm-le');
+      const ls = startLine.get(cell);
+      if (ls) setVar(cell, '--xm-ls', `${ls}px`);
+      else cell.style.removeProperty('--xm-ls');
     } else {
       cell.style.removeProperty('--xm-lx');
       cell.style.removeProperty('--xm-lw');
       cell.style.removeProperty('--xm-lc');
+      cell.style.removeProperty('--xm-le');
+      cell.style.removeProperty('--xm-ls');
     }
     // 按钮块没有 article，走不到 applyFlat 的分割线清理，这里单独抹
     if (isJoiner(cell)) {

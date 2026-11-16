@@ -99,6 +99,60 @@ export function applyAccent(hex: string): void {
 }
 
 /**
+ * 页面自己的强调色。
+ *
+ * 扩展设置里的 accent 是面板的可选项（默认蓝，用户可能改成紫），它和服务对象
+ * 不一定一致：X 的「显示 N 帖子」「选中页签下划线」「发帖按钮」用的是 **X 主题的强调色**，
+ * 可能是粉、绿、黄。浮条这类贴在页面里的元素跟着设置走就会和周围撞色
+ * （实测：页面选中页签是 #f91880 粉，浮条文字却是设置里的 #7856ff 紫）。
+ * ⇒ 从页面里现采，采不到才退回 --xm-acc。
+ */
+let accentAt = -1e9;
+let pageAcc = '';
+
+/** 取元素的不透明底色，近黑近白视为「不是强调色」返回空 */
+function solidBg(el: Element): string {
+  const c = getComputedStyle(el).backgroundColor;
+  const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(c);
+  if (!m) return '';
+  if (m[4] !== undefined && Number(m[4]) < 0.9) return '';
+  const [r, g, b] = [+m[1], +m[2], +m[3]];
+  const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+  if (lum < 0.12 || lum > 0.92) return '';
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+/** 采样页面强调色（限频 1.2s）。采样点按可靠性排序，都不中就不写变量。 */
+export function syncPageAccent(): void {
+  const now = performance.now();
+  if (now - accentAt < 1200) return;
+  accentAt = now;
+
+  let hex = '';
+  // ① 发帖按钮的底色就是强调色，面积大、最稳
+  const compose = document.querySelector<HTMLElement>('[data-testid="SideNav_NewTweet_Button"]');
+  if (compose) hex = solidBg(compose);
+  // ② 选中页签的下划线：只认又矮又宽的那条，避免把页签里的头像/图标当强调色
+  if (!hex) {
+    const tab = document.querySelector<HTMLElement>('[role="tablist"] [role="tab"][aria-selected="true"]');
+    if (tab) {
+      for (const el of Array.from(tab.querySelectorAll<HTMLElement>('*'))) {
+        const r = el.getBoundingClientRect();
+        if (r.height > 6 || r.width < 12) continue;
+        hex = solidBg(el);
+        if (hex) break;
+      }
+    }
+  }
+  if (!hex || hex === pageAcc) return;
+  pageAcc = hex;
+  const st = document.documentElement.style;
+  st.setProperty('--xm-page-acc', hex);
+  st.setProperty('--xm-page-soft', alpha(hex, 0.18));
+  st.setProperty('--xm-page-glow', alpha(hex, 0.5));
+}
+
+/**
  * @param on         背景层是否开启
  * @param bareColumn 主栏不刷底板（推文独立成块时需要）
  */

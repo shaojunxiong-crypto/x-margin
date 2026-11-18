@@ -20,9 +20,19 @@ import { syncPageAccent } from './theming';
 /** 打在原生提示行上的钩子：样式表据此把它压成 0 高 */
 const PILL_ATTR = 'data-xm-pill';
 
-/** 中文「显示 70 帖子」/「展示 12 条帖子」，英文 "Show 70 posts" / "70 posts" */
-const CN_RE = /(显示|展示)\s*\d+\s*条?\s*帖子/;
-const EN_RE = /^(show\s+)?\d+\s+posts?$/i;
+/** 中文「显示 70 帖子」/「展示 12 条帖子」/「查看 12 条新帖子」/「12 条新帖子」，
+ *  英文 "Show 70 posts" / "70 posts" / "Show 12 new posts"。
+ *  ⛔ 文案随 X 改版漂移过（"帖子" → "条新帖子"、"显示" → "查看"），
+ *    只认一种就会静默失效 —— 表现是提示彻底不出现，比样式错了更难查。 */
+const CN_RE = /(显示|展示|查看)\s*\d+\s*条?\s*(新)?\s*帖子|^\d+\s*条?\s*新\s*帖子$/;
+const EN_RE = /^(show\s+)?\d+\s+(new\s+)?posts?$/i;
+
+/** 不带计数的新推提示：「查看新帖子 / See new posts」。
+ *  它是提示行的另一种形态（X 按版本/实验在两者间切换），同样要接管 ——
+ *  ⛔ 只收掉不接管 = 提示彻底消失（v0.1.84 的教训）。 */
+const TOAST_RE = /^(查看新帖子|see\s+new\s+posts?|show\s+new\s+posts?)$/i;
+/** 文案里带数字 ⇒ 一定不是「已发布」回执，不要走 toast 分支 */
+const COUNT_RE = /\d/;
 
 /** 文案长度上限：超过这个长度必然是正文，不是提示行 */
 const LABEL_MAX = 24;
@@ -36,6 +46,8 @@ const MUZZLE_MS = 2000;
 const STALE_MS = 60000;
 /** 位置更新的最小间隔，避免每轮都量一次布局 */
 const PLACE_GAP = 120;
+/** 收起后再亮的最小间隔：X 重挂浮层时不要跟着闪 */
+const FLASH_GAP = 800;
 
 interface Hit {
   btn: HTMLElement;
@@ -53,12 +65,15 @@ let lastHitAt = 0;
 let lastPlace = -1e9;
 let dismissedAt = -1e9;
 let dismissedLabel = '';
+/** 上一次收起浮条的时刻：用来压掉 X 反复重挂浮层造成的频闪 */
+let lastHideAt = -1e9;
 
-/** 按钮文案是否就是提示行；顺手把连续空白压成一个空格 */
+/** 按钮文案是否就是提示行；顺手把连续空白压成一个空格。
+ *  两种形态都算：计数型（显示/查看 N 帖子）与无计数的「查看新帖子」。 */
 function labelOf(btn: HTMLElement): string {
   const t = (btn.textContent ?? '').replace(/\s+/g, ' ').trim();
   if (!t || t.length > LABEL_MAX) return '';
-  return CN_RE.test(t) || EN_RE.test(t) ? t : '';
+  return CN_RE.test(t) || EN_RE.test(t) || TOAST_RE.test(t) ? t : '';
 }
 
 /** 从按钮上溯到「这一行」：cell 内就取 cell，浮层形态取 role=status */
@@ -67,6 +82,23 @@ function rowOf(el: HTMLElement): HTMLElement {
   if (cell) return cell;
   const status = el.closest<HTMLElement>('[role="status"]');
   return status ?? el;
+}
+
+/** pillLabel 形态：它本身可能不是 button（外层再包一层 div），按按钮认会整条漏掉；
+ *  文案对得上就直接拿它当点击目标 —— 派发 click 同样会触发 X 的 onClick。 */
+function hitPillLabel(scope: ParentNode): Hit | null {
+  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('[data-testid="pillLabel"]'))) {
+    const label = labelOf(el);
+    if (!label) continue;
+    // 曾经被我方 toast 规则收掉的那颗，先还回去再接管 ——
+    // 否则「display:none → 高度 0 → 认不到」会锁死，提示再也回不来。
+    const host = el.closest<HTMLElement>(`[${TOAST_ATTR}]`);
+    if (host) host.removeAttribute(TOAST_ATTR);
+    const row = rowOf(el);
+    if (!row.hasAttribute(PILL_ATTR) && row.getBoundingClientRect().height < 1) continue;
+    return { btn: el, row, label };
+  }
+  return null;
 }
 
 function hitIn(scope: HTMLElement): Hit | null {
@@ -81,7 +113,60 @@ function hitIn(scope: HTMLElement): Hit | null {
     if (!row.hasAttribute(PILL_ATTR) && row.getBoundingClientRect().height < 1) continue;
     return { btn, row, label };
   }
-  return null;
+  return hitPillLabel(scope);
+}
+
+/**
+ * 左侧 Home 图标上的未读计数。
+ * X 在「有 N 条新推」时把数字挂在链接内的小徽标上（超过上限显示 "20+"）；
+ * 只有 1 条或不可数时是纯圆点、没有文本 —— 这时返回 0。
+ * 这是页面自己认定的「几条」，比我们猜的可靠。
+ */
+function readNavCount(): number {
+  const link = document.querySelector<HTMLElement>('[data-testid="AppTabBar_Home_Link"]');
+  if (!link) return 0;
+  let best = 0;
+  for (const el of Array.from(link.querySelectorAll<HTMLElement>('span,div'))) {
+    if (el.children.length) continue; // 只看叶子，避免把整段文案读进来
+    const t = (el.textContent ?? '').trim();
+    if (!/^\d{1,3}\+?$/.test(t)) continue;
+    const n = parseInt(t, 10);
+    if (n > best) best = n;
+  }
+  return best;
+}
+
+/**
+ * 从 aria-label / title 里抠条数：X 的提示按钮常把「查看 12 条新帖子」写进无障碍属性，
+ * 可见文案却只有「查看新帖子」。这是最贴原文的口径，优先于导航徽标。
+ */
+function readAriaCount(from: HTMLElement): number {
+  let el: HTMLElement | null = from;
+  for (let i = 0; el && el !== document.body && i < 5; i++, el = el.parentElement) {
+    for (const attr of ['aria-label', 'title']) {
+      const v = el.getAttribute(attr) ?? '';
+      const m = v.match(/(\d{1,3})\s*(?:条|(?:new\s+)?posts?\b)/i);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > 0) return n;
+      }
+    }
+  }
+  return 0;
+}
+
+/**
+ * 无计数的「查看新帖子」补上条数，让顶部浮条与左侧徽标说的是同一件事。
+ * 取值顺序：按钮的 aria-label → 左侧 Home 徽标 → 都没有则返回 null。
+ * ⛔ 返回 null 表示「这条提示没有信息量，不要弹」—— 光说「查看新帖子」
+ *    既不知道几条，又在阅读时反复糊在正文上，宁可不显示。
+ * ⛔ 只补无计数形态：计数型（显示 N 帖子）的数字来自 X 的信息流本身，
+ *    和导航徽标不是同一口径，覆盖会张冠李戴。
+ */
+function withCount(label: string, from: HTMLElement): string | null {
+  if (!TOAST_RE.test(label)) return label;
+  const n = readAriaCount(from) || readNavCount();
+  return n > 0 ? `查看 ${n} 条新帖子` : null;
 }
 
 /**
@@ -102,7 +187,8 @@ function scan(col: HTMLElement, now: number): Hit | null {
   }
   if (now - lastFullScan < FULL_SCAN_GAP) return null;
   lastFullScan = now;
-  return hitIn(col);
+  // 兜底：主栏内所有按钮 → 主栏外的 pillLabel（挂在顶栏 / 悬浮层的那种）
+  return hitIn(col) ?? hitPillLabel(document);
 }
 
 function ensureBar(): HTMLButtonElement {
@@ -143,15 +229,24 @@ function onClick(e: MouseEvent): void {
 
 function showBar(label: string): void {
   const el = ensureBar();
-  if (barLabel !== label) {
+  const same = barLabel === label;
+  if (!same) {
     if (barText) barText.textContent = label;
     barLabel = label;
   }
-  if (el.dataset.on !== '1') el.dataset.on = '1';
+  if (el.dataset.on !== '1') {
+    // 刚收起同一条（<800ms）就再等一轮：X 会反复重挂浮层，
+    // 每挂一次就重新亮一遍的话，屏幕上就成了频闪灯。
+    if (same && performance.now() - lastHideAt < FLASH_GAP) return;
+    el.dataset.on = '1';
+  }
 }
 
 function hideBar(): void {
-  if (bar && bar.dataset.on !== '0') bar.dataset.on = '0';
+  if (bar && bar.dataset.on !== '0') {
+    bar.dataset.on = '0';
+    lastHideAt = performance.now();
+  }
 }
 
 function takeRow(row: HTMLElement): void {
@@ -187,17 +282,15 @@ function teardown(): void {
 }
 
 /**
- * X 自己的浮层提示，两类都要收：
- * ① 「查看新帖子」胶囊（关注列表有新推时挂出来，`[data-testid="pillLabel"]`）；
- * ② 「已发布 / Posted」回执胶囊（发完推文后从顶栏下方弹出来，带几个头像，
- *    根节点是 `[data-testid="toast"]`，**里面没有 pillLabel** —— 只按 pillLabel
- *    认的第一版把它漏掉了，真机上仍会在发帖后弹一下）。
- * 两类都和我们自己的提示语义重复，留着就是双份提示，所以整块收掉。
+ * X 自己的浮层提示，两类都和我们重复，留着就是双份：
+ * ① 「查看新帖子」胶囊（`[data-testid="pillLabel"]`）—— 先由 pill 管线接管，
+ *    只有接管失败时才在这里收掉；
+ * ② 「已发布 / Posted」回执胶囊（`[data-testid="toast"]`，里面没有 pillLabel）—— 直接收。
  * ⛔ 只认「短文本 + 回执措辞」，绝不按 testid 无差别隐藏 toast ——
  *   发送失败、网络错误等提示必须让用户看见。
+ * ⛔ 带数字的文案一律不进这里（见 COUNT_RE）：那是新推计数提示的本体。
  */
 const TOAST_ATTR = 'data-xm-toast';
-const TOAST_RE = /^(查看新帖子|查看\s*\d+\s*条?新帖子|see\s+new\s+posts?|show\s+new\s+posts?)$/i;
 /** 「已发布 / 已发送 / Posted / Your post was sent」这类回执，文本很短 */
 const POSTED_RE = /^(已发布|已发送|已投递|posted|sent|your\s+post\s+was\s+sent|your\s+post\s+was\s+posted)$/i;
 let lastToastScan = -1e9;
@@ -225,8 +318,13 @@ function markNativeToast(): void {
   for (const label of Array.from(document.querySelectorAll<HTMLElement>('[data-testid="pillLabel"]'))) {
     if (label.closest(`[${PILL_ATTR}]`)) continue;
     const text = (label.textContent ?? '').replace(/\s+/g, ' ').trim();
-    if (text && !TOAST_RE.test(text)) continue;
+    if (text && (!TOAST_RE.test(text) || COUNT_RE.test(text))) continue;
     const target = climbToOverlay(label);
+    // 安全阀：上溯上来的若是「一块内容」而不是一颗小浮层，宁可不收。
+    // 整块 display:none 很容易把主栏内容一起带走，且看不出是谁干的。
+    if (target !== label && (target.getBoundingClientRect().height > 96 || target.querySelector('article'))) {
+      continue;
+    }
     if (!target.hasAttribute(TOAST_ATTR)) target.setAttribute(TOAST_ATTR, '');
   }
 
@@ -270,20 +368,31 @@ export function markPill(): void {
 
   // 浮条用页面主题的强调色，不用扩展设置里那个（可能和页面撞色）
   syncPageAccent();
-  // 原生那颗「查看新帖子」胶囊和我们重复，顺手收掉
-  markNativeToast();
 
   const now = performance.now();
+  // ⛔ 顺序：先接管、再收 toast。反过来的话，同一轮里 toast 会先把 pillLabel
+  //    压成 display:none（高度 0），紧接着扫描就认不到它 —— 原生被藏、浮条不出，
+  //    表现就是「提示彻底消失」。
   const hit = scan(col, now);
 
   if (hit) {
-    takeRow(hit.row);
     nativeBtn = hit.btn;
     lastHitAt = now;
-    const muzzled = hit.label === dismissedLabel && now - dismissedAt < MUZZLE_MS;
-    if (muzzled) hideBar();
-    else showBar(hit.label);
-    document.documentElement.dataset.xmPillState = 'ok';
+    takeRow(hit.row);
+    // 无计数形态补上按钮 aria-label / 左侧徽标的条数，两处提示口径一致
+    const shown = withCount(hit.label, hit.btn);
+    if (shown == null) {
+      // 两处都拿不到条数 ⇒ 顶部一条提示都不显示：光说「查看新帖子」既不知道几条，
+      // 又会在阅读时反复糊在正文上。原生行已 takeRow 压掉，浮层形态由末尾的
+      // markNativeToast 收掉；新推仍由左侧图标的圆点/数字兜着，滚回顶部即可看到。
+      hideBar();
+      document.documentElement.dataset.xmPillState = 'nocount';
+    } else {
+      const muzzled = shown === dismissedLabel && now - dismissedAt < MUZZLE_MS;
+      if (muzzled) hideBar();
+      else showBar(shown);
+      document.documentElement.dataset.xmPillState = 'ok';
+    }
   } else if (bar?.dataset.on === '1' && now - lastHitAt < STALE_MS) {
     // 按钮暂时不在 DOM：浮条继续挂着，用户点了会滚回顶部重新认
     document.documentElement.dataset.xmPillState = 'hold';
@@ -293,6 +402,9 @@ export function markPill(): void {
     nativeBtn = null;
     document.documentElement.dataset.xmPillState = 'miss';
   }
+
+  // 接管失败的原生浮层（以及发帖回执）才收掉
+  markNativeToast();
 
   place(col, now);
 }

@@ -160,6 +160,14 @@ function isNoise(cell: HTMLElement): boolean {
 /**
  * 藏掉杂物格子。只在开启「隐藏推广」时生效，跟广告同一个开关。
  * 作用域限主栏 —— 右栏那个「Who to follow」模块是常驻组件，不动它。
+ *
+ * ⛔ 每轮都重判、不成立就摘，不做「打了就跳过」的缓存。
+ * 这条规则带 display:none，是「删除内容」而不是「换外观」：
+ * X 的虚拟列表会回收 `cellInnerDiv` 节点挪到别处复用，标记打在节点上，
+ * 复用到一条正常推文时它就被整条吞掉；详情页还存在「先建空壳、后挂 article」
+ * 的间隙，那一瞬间判出来的结果同样会永久留着。
+ * 缓存版实测症状：滚到深处或点开某条推文，那一条凭空消失，且往回滚也不复现。
+ * ⛔ 撤销必须补 reflowCards：高度从 0 恢复，后面的 translateY 全是按 0 算的。
  */
 export function markNoise(): void {
   const html = document.documentElement;
@@ -168,25 +176,20 @@ export function markNoise(): void {
   lastNoiseScan = now;
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
   if (!col) return;
-  // 开关关掉时要能撤回：class 是 JS 打的，纯 CSS 收不回去
-  if (!html.classList.contains('xm-noads')) {
-    const marked = col.querySelectorAll<HTMLElement>('.' + NOISE_CLS);
-    if (!marked.length) return;
-    marked.forEach((el) => el.classList.remove(NOISE_CLS));
-    html.dataset.xmNoise = '0';
-    if (html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
-    return;
-  }
-  let added = 0;
+  const on = html.classList.contains('xm-noads');
+  let touched = 0;
   col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
-    if (cell.classList.contains(NOISE_CLS)) return;
-    if (!isNoise(cell)) return;
-    cell.classList.add(NOISE_CLS);
-    added++;
+    const marked = cell.classList.contains(NOISE_CLS);
+    // 关闭开关时一律不成立，走「摘掉」分支
+    const hit = on && isNoise(cell);
+    if (hit === marked) return;
+    if (hit) cell.classList.add(NOISE_CLS);
+    else cell.classList.remove(NOISE_CLS);
+    touched++;
   });
   html.dataset.xmNoise = String(col.querySelectorAll('.' + NOISE_CLS).length);
-  // 藏掉后这一格高度归零，下面的 translateY 得重排，否则原地留一条空带
-  if (added && html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
+  // 高度一变（0 ⇄ 原高），下面的 translateY 必须重排，否则要么留空带、要么叠住
+  if (touched && html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
 }
 
 /**
@@ -215,21 +218,32 @@ function isMoreSection(cell: HTMLElement): boolean {
 /** 扫描限频：applyFlat 被悬停、心跳反复调用，每轮遍历全部 cell 没必要 */
 let lastMoreScan = -1e9;
 
+/**
+ * 标记「发现更多」小节条。
+ * ⛔ 与 markNoise 同理：每轮重判、不成立就摘。这条规则会把格内所有子元素
+ * display:none 并锁死高度，一旦标记跟着被复用的节点跑到一条正常推文上，
+ * 那条推文就只剩一个 `···` 小牌（看起来像被换掉了）。
+ * ⛔ 撤销同样要补 reflowCards：锁定的 74px 恢复成自然高度，后面的 translateY 全错。
+ */
 export function markMoreSection(): void {
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
   if (!col) return;
   const now = performance.now();
   if (now - lastMoreScan < 600) return;
   lastMoreScan = now;
-  let added = 0;
+  let touched = 0;
+  // 样式只在卡片模式下生效；关掉卡片就一律摘，别把属性留给下次开卡
+  const card = document.documentElement.classList.contains('xm-card');
   col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
-    if (cell.dataset[MORE_SEC_ATTR]) return;
-    if (!isMoreSection(cell)) return;
-    cell.dataset[MORE_SEC_ATTR] = '1';
-    added++;
+    const marked = cell.dataset[MORE_SEC_ATTR] === '1';
+    const hit = card && isMoreSection(cell);
+    if (hit === marked) return;
+    if (hit) cell.dataset[MORE_SEC_ATTR] = '1';
+    else delete cell.dataset[MORE_SEC_ATTR];
+    touched++;
   });
-  // 样式把这一格锁成 66px，与自然高度可能差几像素；高度一改，后面几条的 translateY 就错了
-  if (added && document.documentElement.classList.contains('xm-card')) {
+  // 样式把这一格锁成 74px，与自然高度可能差几像素；高度一改，后面几条的 translateY 就错了
+  if (touched && card) {
     requestAnimationFrame(() => reflowCards());
   }
 }
@@ -479,6 +493,9 @@ export function applyFlat(on: boolean): void {
     for (const cls of [FLAT_CELL_CLS, JOINER_CLS, NOISE_CLS, ...THREAD_CLS]) {
       document.querySelectorAll<HTMLElement>('.' + cls).forEach((el) => el.classList.remove(cls));
     }
+    // 「发现更多」小节条是 dataset 属性，上面那个 class 循环管不到它 —— 原先
+    // 关掉卡片模式后它仍锁着 74px、内容继续隐身，只有整页刷新才恢复。
+    document.querySelectorAll<HTMLElement>('[data-xm-more-sec]').forEach((el) => el.removeAttribute('data-xm-more-sec'));
     for (const [el, prev] of flatLines) {
       if (!el.isConnected) continue;
       if (prev) el.style.setProperty('border-bottom', prev);

@@ -547,14 +547,16 @@ export function applyFlat(on: boolean): void {
 const TY_RE = /translateY\((-?[\d.]+)px\)/;
 
 /**
- * 重排基准：只在「渲染窗口的第一条还没有 translateY」时兜底用。
- * 只要首条自带 y，就以它为锚往下推 —— 绝不把整列平移到某个固定基准上。
+ * 上一轮写过 min-height 的容器。
+ * ⛔ 只用于「只增不减」的判定：同一容器算出的高度变小就保留旧值，
+ * 换容器（或换路由）才允许按新值写。
  */
-let baseCol: HTMLElement | null = null;
-let baseY = 0;
+let minCol: HTMLElement | null = null;
+/** 上次看到的路由：SPA 换页面时容器常被复用，必须把高度记忆清掉 */
+let minPath = '';
 
 export function resetReflowBase(): void {
-  baseCol = null;
+  minCol = null;
 }
 
 /**
@@ -564,6 +566,11 @@ export function resetReflowBase(): void {
  * 每轮从首条重新累加，一旦 X 把顶部 cell 摘掉（滚动时的常态），首条换成第二条，
  * 整列就会被我们按新起点平移一次 —— 每摘一格抖一下，正是滚动时的重排来源。
  * 改成「后一条 = 前一条 y + 前一条高度」，已有位置原地不动，只补掉错位的那几格。
+ *
+ * ⛔ 只碰 X 自己写过 translateY 的 cell（文档流布局交回 X）：
+ * 详情页主帖可能不是绝对定位，给它补一个 translateY 会把它整块推出视口，
+ * 表现就是「点开推文后主帖不见、只剩回复」。渲染窗口里只要有一条没有 y，
+ * 说明这一页不是纯绝对定位列表，本轮一律不动（结构未稳定，硬算必错）。
  */
 export function reflowCards(): void {
   const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
@@ -585,22 +592,33 @@ export function reflowCards(): void {
     ys[i] = cur ? parseFloat(cur[1]) : NaN;
   }
 
-  // 锚点：首条自带 y 就用它，否则退回绑定主栏时记下的基准
   let first = 0;
   while (first < n && !has[first]) first++;
   if (first >= n) return;
-  if (baseCol !== col || !baseCol.isConnected) {
-    baseY = Number.isNaN(ys[first]) ? 0 : ys[first];
-    baseCol = col;
+
+  // 有高度的格子里，带 y 与不带 y 各数一遍
+  let withY = 0;
+  let noY = 0;
+  for (let i = first; i < n; i++) {
+    if (!has[i]) continue;
+    if (Number.isNaN(ys[i])) noY++;
+    else withY++;
+  }
+  // 整列文档流（一条 y 都没有）⇒ 不是虚拟列表，交回 X
+  if (!withY) {
+    document.documentElement.dataset.xmReflow = `${n}/plain`;
+    return;
+  }
+  // 混排 ⇒ 正处在路由切换 / 主帖填充的中途，本轮不写坐标也不改容器高度
+  if (noY) {
+    document.documentElement.dataset.xmReflow = `${n}/mixed`;
+    return;
   }
 
-  let prevY = Number.isNaN(ys[first]) ? baseY : ys[first];
+  // 首条锚点：原地不动，只以它为基准往下推
+  let prevY = ys[first];
   let prevH = hs[first];
   let moved = 0;
-  if (Number.isNaN(ys[first])) {
-    cells[first].style.setProperty('transform', `translateY(${prevY.toFixed(3)}px)`, 'important');
-    moved++;
-  }
   for (let i = first + 1; i < n; i++) {
     if (!has[i]) continue; // 广告 / 折叠项：不占位也不动它
     const want = prevY + prevH;
@@ -612,13 +630,47 @@ export function reflowCards(): void {
     prevH = hs[i];
   }
 
-  // 容器高度：X 靠它算可滚动范围
+  // 容器高度：X 靠它算可滚动范围。
+  // ⛔ 只增不减 —— 视频加载中途读到的高度偏小，写下去会让容器变矮、scrollTop 被 clamp，
+  // 页面整个往上跳一下，主帖被甩出视口。真变矮由 X 自己重建容器收回。
+  // ⛔ 两条硬闸（v0.1.90）：
+  //   ① 详情页（/status/）一律不写 —— 那里的内容由 X 自己撑，写高度收益为零，
+  //      而主帖视频从占位高度变实高时会让我们把容器写矮，正是「点开推文后主帖消失」；
+  //   ② 渲染窗口里只要有还没就绪的媒体（video 没拿到 videoWidth / img 没 complete），
+  //      本轮高度必是中间态，一律不写。
   const wrap = cells[first].parentElement;
-  if (wrap && wrap !== col) {
+  const skipMh = isDetailPath() || hasPendingMedia(col);
+  if (wrap && wrap !== col && !skipMh) {
+    const path = location.pathname;
+    if (path !== minPath) {
+      minPath = path;
+      minCol = null;
+    }
     const need = Math.round(prevY + prevH);
     const cur = parseFloat(wrap.style.minHeight) || 0;
-    if (Math.abs(cur - need) > 0.5) wrap.style.setProperty('min-height', `${need}px`, 'important');
+    const same = wrap === minCol;
+    if (!same || need > cur + 0.5) {
+      if (Math.abs(cur - need) > 0.5) wrap.style.setProperty('min-height', `${need}px`, 'important');
+      minCol = wrap;
+    }
   }
 
-  document.documentElement.dataset.xmReflow = `${cells.length}/${moved}`;
+  document.documentElement.dataset.xmReflow = `${cells.length}/${moved}${skipMh ? ':nomh' : ''}`;
+}
+
+/** 详情页（/<user>/status/<id>）：主帖 + 回复由 X 自己排版，我们不参与撑高 */
+function isDetailPath(): boolean {
+  return location.pathname.includes('/status/');
+}
+
+/** 还有媒体没加载完 ⇒ 此刻的高度是占位值，不能拿来定容器高度 */
+function hasPendingMedia(col: HTMLElement): boolean {
+  for (const v of Array.from(col.querySelectorAll('video'))) {
+    if (!v.videoWidth) return true;
+  }
+  for (const im of Array.from(col.querySelectorAll('img'))) {
+    // 有 src 才算「正在加载」；无 src 的占位节点 complete 恒为 true，不必绕过
+    if (im.getAttribute('src') && !im.complete) return true;
+  }
+  return false;
 }

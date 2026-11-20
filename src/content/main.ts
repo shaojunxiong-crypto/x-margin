@@ -133,7 +133,11 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
       markPageHead();
       markPill();
       if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
-      if (settings.layout.hideCompose && !document.querySelector('.xm-comp-hide')) markComposer(true);
+      // ⛔ 每轮都要重判：详情页主帖的 article 常晚于面板出现，跳过重判会让误藏的主帖
+      // 永久锁在 display:none 里（v0.1.91 修）。
+      // 但函数内部是「算完再和上一轮比对、只变时才切 class」，不是每轮摘了重打 ——
+      // 那样遇到限频提前返回时 class 已被摘掉的空档，面板就每 400ms 闪一次（v0.1.92 修）。
+      if (settings.layout.hideCompose) markComposer(true);
       if (settings.layout.hideFloats) markFloats(true);
       ui?.place(settings.layout.railNav);
       queueReflow();

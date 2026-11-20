@@ -106,44 +106,126 @@ export function widenInner(): void {
 
 /**
  * 发推面板：从「输入框 + 发帖按钮」的公共父层往上爬，取只属于面板的最大容器。
- * 硬边界：一旦这层开始包含推文 article、外来的 cell 或外来的 tablist 就停 ——
- * 详情页的主帖与回复框同容器，靠这条边界才不会把原推文一起藏掉。
+ * 硬边界（任一命中就停，宁可少藏）：
+ *   ① 这层开始包含推文内容（article / 正文 / 头像）—— detail 页主帖与回复框同容器；
+ *   ② 这层含外来的 cell 或外来的 tablist；
+ *   ③ 几何保险：候选层高过主栏 55% —— 发帖面板不可能占大半屏，主帖可以。
+ * ⛔ 调用方必须每轮都调（不能「已经有 .xm-comp-hide 就跳过」）—— 详情页主帖的
+ *    article 往往晚于面板出现，跳过重判会把主帖永久锁进 display:none（v0.1.91 修）。
+ * ⛔ 但「每轮重判」不等于「每轮先摘再打」：v0.1.91 那样写，函数中段的限频提前返回时
+ *    标记已被摘掉、还没加回去，发帖面板就每 400ms 闪一次（v0.1.92 修）。
+ *    所以改成「先算结论 → 和上一轮的目标元素比对 → 只在变化时切换 class」，
+ *    同结论时一个 class 都不碰，DOM 不动、不触发重排。
+ * ⛔ 详情页有两种需求要同时满足（v0.1.93 修）：
+ *    ① 回复框要藏（原先整段跳过 ⇒ 详情页面板又露出来了）；
+ *    ② 主帖绝不能藏（v0.1.91 的 P0）。
+ *    做法：详情页**只藏「输入框与发帖按钮的最近公共父层」，一层都不往上扩**。
+ *    那一层天然只含 avatar / 输入区 / 工具栏，不含 article，无论主帖有没有渲染完，
+ *    都不可能把主帖包进来 —— 不需要靠「猜层级」或「连续两轮确认」，一次判定即定。
+ *    高度上限再收到主栏 45%（420px 封顶）兜底。
  */
 export function markComposer(hide: boolean): void {
-  document.querySelectorAll('.xm-comp-hide').forEach((el) => el.classList.remove('xm-comp-hide'));
   const html = document.documentElement;
   html.classList.toggle('xm-nocompose', hide);
-  delete html.dataset.xmComp;
-  if (!hide) return;
+  if (!hide) {
+    html.dataset.xmComp = 'off';
+    setCompTarget(null);
+    return;
+  }
+
+  const isDetail = location.pathname.includes('/status/');
+  const now = performance.now();
+  // 还没藏过任何一层 ⇒ 本轮必算：让面板白站 400ms 就是「隐藏太晚」（v0.1.93 修）
+  const fresh = !compTarget || !compTarget.isConnected;
+  if (!(fresh && !isDetail) && now - lastCompScan < 400) return;
+  lastCompScan = now;
 
   const col = document.querySelector('[data-testid="primaryColumn"]');
   const btn = col?.querySelector<Element>('[data-testid="tweetButtonInline"]');
+  if (!col || !btn) {
+    html.dataset.xmComp = 'miss';
+    setCompTarget(null);
+    return;
+  }
   let area: Element | null = null;
   for (const sel of ['[data-testid="tweetTextarea_0"]', '[data-testid="tweetTextarea_0RichTextInputContainer"]']) {
     const el = col?.querySelector(sel);
     if (el) { area = el; break; }
   }
-  if (!col || !btn) return;
   if (!area) area = btn;
 
   let best: Element | null = area;
   while (best && best !== col && !best.contains(btn)) best = best.parentElement;
-  if (!best || best === col) { html.dataset.xmComp = 'miss'; return; }
+  if (!best || best === col) {
+    html.dataset.xmComp = 'miss';
+    setCompTarget(null);
+    return;
+  }
 
-  for (let i = 0; i < 14; i++) {
+  const colH = col.getBoundingClientRect().height || 1;
+  // 详情页：0 层（就用输入框+按钮的 LCA）；首页：一直爬到「只属于面板的最大层」
+  const maxLayers = isDetail ? 0 : 14;
+  const cap = isDetail ? Math.min(colH * 0.45, 420) : colH * 0.55;
+  for (let i = 0; i < maxLayers; i++) {
     const p: Element | null = best.parentElement;
     if (!p || p === col) break;
     if (!p.contains(btn)) break;
-    if (p.querySelector('article[data-testid="tweet"]')) break;
+    if (hasTweetContent(p)) break;
     const foreignCell = [...p.querySelectorAll('[data-testid="cellInnerDiv"]')].some((c) => !best!.contains(c));
     if (foreignCell) break;
     const foreignTab = [...p.querySelectorAll('[role="tablist"]')].some((t) => !best!.contains(t));
     if (foreignTab) break;
+    // 几何保险：再往上这层就遮住大半屏了
+    if (p.getBoundingClientRect().height > cap) break;
     best = p;
   }
-  if (best === col) { html.dataset.xmComp = 'col'; return; }
+  if (best === col) {
+    html.dataset.xmComp = 'col';
+    setCompTarget(null);
+    return;
+  }
   // 宁可什么都不藏，也不能藏到推文
-  if (best.querySelector('article[data-testid="tweet"]')) { html.dataset.xmComp = 'guard'; return; }
-  best.classList.add('xm-comp-hide');
+  if (hasTweetContent(best) || best.getBoundingClientRect().height > cap) {
+    html.dataset.xmComp = 'guard';
+    setCompTarget(null);
+    return;
+  }
+  // 详情页的 LCA 若把推文 cell 整个包进来（主帖与回复框同 cell 的极端结构），仍然停手
+  if (isDetail && best.querySelector('[data-testid="cellInnerDiv"]')) {
+    html.dataset.xmComp = 'guard';
+    setCompTarget(null);
+    return;
+  }
   html.dataset.xmComp = 'ok';
+  setCompTarget(best);
+}
+
+/** 上一轮真正被藏的那一层 */
+let compTarget: Element | null = null;
+
+/** 只在目标变化时切 class —— 同结论时完全不碰 DOM，杜绝闪现 */
+function setCompTarget(el: Element | null): void {
+  const cur = compTarget && compTarget.isConnected ? compTarget : null;
+  if (cur === el) {
+    // 同目标，但 class 可能被别处摘掉过（applyFlat 等），补回来
+    if (el && !el.classList.contains(COMP_HIDE_CLS)) el.classList.add(COMP_HIDE_CLS);
+    compTarget = el;
+    return;
+  }
+  if (cur) cur.classList.remove(COMP_HIDE_CLS);
+  if (el) el.classList.add(COMP_HIDE_CLS);
+  compTarget = el;
+}
+
+const COMP_HIDE_CLS = 'xm-comp-hide';
+
+let lastCompScan = -1e9;
+
+/** 这一层里已经有推文的实质内容 ⇒ 是推文的地盘，不是发帖面板 */
+function hasTweetContent(el: Element): boolean {
+  return !!(
+    el.querySelector('article[data-testid="tweet"]')
+    || el.querySelector('[data-testid="tweetText"]')
+    || el.querySelector('[data-testid="Tweet-User-Avatar"]')
+  );
 }

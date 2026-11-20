@@ -95,15 +95,38 @@ let ovSub: HTMLElement | null = null;
 let tipEl: HTMLElement | null = null;
 let tipTimer = 0;
 let busy = false;
+/** 本次截图开始时刻。给 busy 加看门狗，避免任何一处意外挂起把功能永久锁死。 */
+let busyAt = 0;
+/** 看门狗上限：正常一条长推文分段截图也在 10s 内，超过这个值一定是卡住了。 */
+const BUSY_MAX = 20000;
 let lastMount = 0;
 let blobUrl = '';
 let blob: Blob | null = null;
 let fileName = 'x.png';
 
-/** 一次 0.16s 的淡入淡出：留给 CSS 一帧，再等图片解码 */
-function settle(): Promise<void> {
+/**
+ * 一次 0.16s 的淡入淡出：留给 CSS 一帧，再等图片解码。
+ *
+ * ⛔ 不能只靠 rAF（v0.1.94）：显示器休眠、窗口失焦、标签页被降级时 rAF 会被整体暂停，
+ * 回调永不触发 ⇒ 这里永不 resolve ⇒ shoot() 卡在第一个 await，finally 不执行，
+ * busy 永远为 true，此后每次点按钮都被 `if (busy) return` 静默吞掉（「空闲一段时间后截图就废了」）。
+ * 现在三条退路：① 页面不可见时直接走定时器（rAF 此刻必然不跑）；② 正常路径仍是两帧 rAF + 70ms；
+ * ③ 无论哪条，都挂一个 ms+600 的兜底定时器，保证最多等 600 多毫秒一定往下走。
+ */
+function settle(ms = 70): Promise<void> {
   return new Promise((res) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(res, 70)));
+    let done = false;
+    const fin = (): void => {
+      if (done) return;
+      done = true;
+      res();
+    };
+    if (document.visibilityState === 'hidden') {
+      setTimeout(fin, ms);
+      return;
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(fin, ms)));
+    setTimeout(fin, ms + 600);
   });
 }
 
@@ -191,14 +214,54 @@ function onDocClick(ev: MouseEvent): void {
 
 /* ────────────────────────── 截图 ────────────────────────── */
 
-function captureFrame(): Promise<string> {
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** 扩展上下文是否还在。扩展被重载/更新后，旧页面里的 chrome.runtime 会失效，重试无意义。 */
+function runtimeAlive(): boolean {
+  try {
+    return Boolean(chrome.runtime?.id);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 心跳：把休眠的后台叫醒。
+ * MV3 的 service worker 空闲约 30s 就被终止，此后首次 sendMessage 会拿到
+ * `Could not establish connection. Receiving end does not exist.` —— 而这一条失败的消息
+ * 本身就会触发唤醒（Chromium 的行为），所以失败也要吞掉，只需留出一点唤醒时间。
+ */
+function ping(timeout = 1200): Promise<void> {
+  return new Promise((res) => {
+    let done = false;
+    const fin = (): void => {
+      if (done) return;
+      done = true;
+      res();
+    };
+    const t = window.setTimeout(fin, timeout);
+    try {
+      chrome.runtime.sendMessage({ type: 'xm:ping' }, () => {
+        clearTimeout(t);
+        void chrome.runtime.lastError; // 读一次，避免控制台刷「Unchecked runtime.lastError」
+        fin();
+      });
+    } catch {
+      clearTimeout(t);
+      fin();
+    }
+  });
+}
+
+/** 单次取帧。timeout 只负责别把整条链路吊死，失败一律 reject。 */
+function askShot(timeout = 5000): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const timer = window.setTimeout(() => {
       if (settled) return;
       settled = true;
-      reject(new Error('截图超时（后台无响应）'));
-    }, 5000);
+      reject(new Error('后台无响应（超时）'));
+    }, timeout);
     const done = (err: Error | null, url?: string): void => {
       if (settled) return;
       settled = true;
@@ -217,6 +280,32 @@ function captureFrame(): Promise<string> {
       done(e instanceof Error ? e : new Error(String(e)));
     }
   });
+}
+
+/**
+ * 取一帧，带「先唤醒、再重试」。
+ *
+ * ⛔ 原来的实现是一次性调用：空闲过一段时间后首次点截图，后台已被回收，直接弹
+ * 「截图失败：后台不可达」，用户必须再点一次才能成功（v0.1.93 及以前）。现在：
+ *   ① 每次取帧前先发心跳，活着时几乎零成本，终止时顺带把它叫醒；
+ *   ② 失败按 0 / 120 / 300 / 600ms 退避，最多 4 轮（含首轮）；
+ *   ③ 内容脚本自身失效（扩展刚被重载）不重试 —— 那种情况重试也不会好，只能刷新页面。
+ * 重试只在「取帧」这一层，拼接与裁切逻辑完全不变。
+ */
+async function captureFrame(): Promise<string> {
+  let last = new Error('取不到画面');
+  for (let i = 0; i < 4; i++) {
+    if (!runtimeAlive()) throw new Error('扩展已重载，请刷新页面后重试');
+    if (i) await sleep(i === 1 ? 120 : i === 2 ? 300 : 600);
+    await ping();
+    if (!runtimeAlive()) throw new Error('扩展已重载，请刷新页面后重试');
+    try {
+      return await askShot(i ? 3000 : 5000);
+    } catch (e) {
+      last = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw new Error(`后台无响应，已重试 3 次（${last.message}）`);
 }
 
 function loadImg(src: string): Promise<HTMLImageElement> {
@@ -279,8 +368,12 @@ function nameFor(art: HTMLElement): string {
 }
 
 async function shoot(art: HTMLElement): Promise<void> {
-  if (busy) return;
+  // ⛔ 锁必须能自己松开：曾经 busy 卡死后，此后每次点击都被这一行静默吞掉，只能刷新页面。
+  if (busy && performance.now() - busyAt < BUSY_MAX) return;
+  // 走到这里说明上一轮已经卡死：顺手清掉它遗留的截图态（按钮隐身 / 平滑滚动禁用），再接管。
+  if (busy) document.documentElement.classList.remove('xm-shotting');
   busy = true;
+  busyAt = performance.now();
   const html = document.documentElement;
   const scroller = scrollRoot(art);
   const prevScroll = scroller ? scroller.scrollTop : window.scrollY;

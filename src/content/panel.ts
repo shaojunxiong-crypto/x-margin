@@ -44,7 +44,9 @@ const CSS = `
 /* 进入图标栏后跟 X 自己的导航项同尺寸同形状：52px 正圆、无边框无阴影 ——
    这里是寄生在 X 导航里的悬停态，圆角跟随 X，不改直角。
    用 fixed 钉在窗口左下角，不挂进 nav：那条路依赖 X 的账户按钮容器，容器塌陷会连齿轮一起消失。 */
-.xm-fab[data-rail="1"]{position:fixed;left:12px;bottom:16px;right:auto;top:auto;margin:0;width:52px;height:52px;
+/* 齿轮位置 = 栏左边界 + 栏内内缩（rail.ts 写 --xm-rail-left / --xm-rail-in）。
+   ⛔ 不能写死 left:12px：新版外壳 mx-auto 居中，栏在 x=67 起，齿轮会落到栏外。 */
+.xm-fab[data-rail="1"]{position:fixed;left:calc(var(--xm-rail-left,0px) + var(--xm-rail-in,12px));bottom:16px;right:auto;top:auto;margin:0;width:52px;height:52px;
   border:0;border-radius:9999px;background:transparent;box-shadow:none;
   -webkit-backdrop-filter:none;backdrop-filter:none;color:var(--xm-rail-fg,#e7e9ea)}
 .xm-fab[data-rail="1"]:hover{transform:none;background:rgba(127,127,127,.18)}
@@ -60,7 +62,7 @@ const CSS = `
   opacity:0;visibility:hidden;pointer-events:none;transform:translateY(6px);
   transition:opacity .18s ease,transform .18s ease,visibility .18s}
 .xm-panel[data-open="1"]{opacity:1;visibility:visible;pointer-events:auto;transform:none}
-.xm-root[data-rail="1"] .xm-panel{left:88px;bottom:18px}
+.xm-root[data-rail="1"] .xm-panel{left:calc(var(--xm-rail-left,0px) + 84px);bottom:18px}
 /* 浮动球模式下面板必须让开球体本身（46px + 上下留白），否则打开后点不到关不掉 */
 .xm-root[data-rail="0"] .xm-panel{right:18px;bottom:152px;max-height:min(78vh,620px)}
 .xm-panel *{box-sizing:border-box}

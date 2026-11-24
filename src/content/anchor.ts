@@ -7,6 +7,8 @@
  * 恢复时把那条推文摆回原来的 top：只在有限时间内、漂移 > 8px 才纠，用户一动就收手。
  */
 
+import { column, tweets } from './sel';
+
 const KEY = 'xm:anchors';
 /** 最多记 8 条路径，够覆盖「时间线 → 详情 → 返回」这种来回了 */
 const MAX_PATHS = 8;
@@ -65,7 +67,7 @@ function pathKey(): string {
  */
 function selfId(art: HTMLElement): string | null {
   for (const a of art.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]')) {
-    if (a.closest('article[data-testid="tweet"]') !== art) continue;
+    if (a.closest('article') !== art) continue;
     const m = /\/status\/(\d+)/.exec(a.getAttribute('href') || '');
     if (m) return m[1];
   }
@@ -74,7 +76,7 @@ function selfId(art: HTMLElement): string | null {
 
 function findById(id: string): HTMLElement | null {
   for (const a of document.querySelectorAll<HTMLAnchorElement>(`a[href*="/status/${id}"]`)) {
-    const art = a.closest<HTMLElement>('article[data-testid="tweet"]');
+    const art = a.closest<HTMLElement>('article');
     if (art && selfId(art) === id) return art;
   }
   return null;
@@ -82,9 +84,7 @@ function findById(id: string): HTMLElement | null {
 
 /** 视口顶部第一条「真正露出来」的推文（DOM 序 = 视觉序，虚拟列表也成立） */
 function topArticle(): { id: string; top: number } | null {
-  const arts = document.querySelectorAll<HTMLElement>(
-    '[data-testid="primaryColumn"] article[data-testid="tweet"]',
-  );
+  const arts = tweets();
   for (const art of arts) {
     const r = art.getBoundingClientRect();
     if (r.bottom <= 8 || r.height < 20) continue;
@@ -113,7 +113,7 @@ function noteScroll(): void {
 
 /** X 的滚动容器通常是 window；万一被套在内层，沿主栏往上找一个真在滚的 */
 function scroller(): HTMLElement | null {
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   let el = col?.parentElement ?? null;
   while (el && el !== document.body && el !== document.documentElement) {
     const cs = getComputedStyle(el);

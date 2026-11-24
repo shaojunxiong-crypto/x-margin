@@ -5,6 +5,7 @@
  */
 
 import type { FontChoice, Glass } from '../shared/settings';
+import { column, navRoot } from './sel';
 
 export type Theme = 'light' | 'dark';
 
@@ -167,19 +168,19 @@ export function applySkin(theme: Theme, on: boolean, glass: Glass = 'mid', softT
   restore();
   if (!on) return;
 
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (col) {
     for (let el = col.parentElement; el && el !== document.documentElement; el = el.parentElement) paint(el, 'transparent');
     paint(col, bareColumn ? 'transparent' : surface(theme, glass));
   }
-  const side = document.querySelector<HTMLElement>('[data-testid="sidebarColumn"]');
+  const side = document.querySelector<HTMLElement>('[data-testid="sidebarColumn"], aside');
   if (side) {
     for (let el = side.parentElement; el && el !== document.documentElement; el = el.parentElement) {
       if (!touched.has(el)) paint(el, 'transparent');
     }
     paint(side, surface(theme, glass, false));
   }
-  const bar = document.querySelector<HTMLElement>('header[role="banner"]');
+  const bar = navRoot()?.closest<HTMLElement>('header') ?? navRoot();
   if (bar) paint(bar, surface(theme, glass, false));
 }
 
@@ -210,7 +211,7 @@ export function detectTheme(): Theme {
     if (a < 0.1) return null;
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
   };
-  const col = document.querySelector('[data-testid="primaryColumn"]');
+  const col = column();
   const l = probe(col) ?? probe(document.body) ?? 0;
   return l < 0.5 ? 'dark' : 'light';
 }

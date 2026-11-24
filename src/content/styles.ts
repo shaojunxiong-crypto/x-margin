@@ -292,9 +292,18 @@ html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]::after{
 html:not(.xm-dark) .xm-pillbar-in{
   box-shadow:0 6px 20px var(--xm-page-soft,rgba(29,155,240,.18)),0 2px 8px rgba(0,0,0,.16);
 }
-/* X 自己的「查看新帖子」浮层：和我们这颗胶囊语义完全重合，留着就是两个提示同时挂在顶上。
-   pill.ts 会给它（及其定位祖先）打 data-xm-toast，这里整块收掉。 */
-html.xm-card [data-xm-toast]{display:none!important}
+/* X 自己的新推提示：主人 2026-11-22 明确「彻底去掉」，页面上不留任何形态。
+   两段保障：
+   ① 文案节点本身（pillLabel，新旧两种客户端都带这个 testid）直接隐身 ——
+      JS 标记有 400ms 限频，靠这一条保证任何一帧都不会露字；
+   ② pill.ts 打到浮层祖先上的 data-xm-toast 整块收掉，并压平高度，
+      避免残留一个看不见但占 36~56px 的空白条。 */
+[data-testid="pillLabel"]{display:none!important}
+[data-xm-toast]{
+  display:none!important;
+  height:0!important;min-height:0!important;max-height:0!important;
+  margin:0!important;padding:0!important;border:0!important;overflow:hidden!important;
+}
 `;
 
 /** 字体与玻璃：字体族走 --xm-font，正文字号单独覆盖 */
@@ -321,7 +330,8 @@ html.xm-skin header[role="banner"]{backdrop-filter:blur(14px) saturate(1.3)}
  * 去右栏后必须给主栏 auto 外边距，否则 350px 的空白全堆在右边，整页左歪。
  */
 const LAYOUT_CSS = `
-html.xm-noside [data-testid="sidebarColumn"]{display:none!important}
+html.xm-noside [data-testid="sidebarColumn"],
+html.xm-noside aside{display:none!important}
 html.xm-noside main[role="main"]{flex-grow:1}
 html.xm-noside [data-testid="primaryColumn"]{margin-left:auto!important;margin-right:auto!important}
 html.xm-wide main[role="main"]{max-width:none!important}
@@ -430,7 +440,189 @@ html.xm-rail header[role="banner"] [role="button"].xm-hide,
 html.xm-rail header[role="banner"] [data-testid].xm-hide{display:none!important}
 `;
 
-const CSS = BASE_CSS + SOFT_CSS + QUOTE_CSS + CELL_CARD_CSS + FONT_CSS + LAYOUT_CSS + RAIL_CSS;
+/**
+ * 新版结构（2026-11 · abs.twimg.com/x-web 的 Tailwind 重写版）。
+ *
+ * 锚点：`main` / `ul > li[data-index]` / `article` / `div[data-post-avatar]`。
+ * `data-testid` 几乎全没了（只剩 SearchBox_Search_Input 与 premium-signup-tab）。
+ *
+ * ⛔ 上面所有旧版规则一条都不删：X 是灰度发布，同一时刻可能两种客户端都在跑，
+ *    旧锚点是回退时唯一的活路。
+ * ⛔ 这里的 `li[data-index]` 只在命中新版时才有意义 —— 旧版时间线里没有 li，
+ *    两套规则并存不会互相干扰。
+ * ⛔ 加宽不靠这里的 CSS：主栏宽度由 X 的 `--x-main-column-width` 喂 grid 轨道，
+ *    实测写在 main / html 上都无效，必须由 layout.ts 写回定义它的那一层。
+ */
+const NEW_CSS = `
+/* ── 卡片：格子换成 li[data-index]，定位机制仍是 translateY，与 cellInnerDiv 同构 ── */
+html.xm-card main li[data-index]{
+  clip-path:inset(var(--xm-card-gap,15px) var(--xm-card-x,0px) var(--xm-card-gap,15px) var(--xm-card-x,0px) round var(--xm-card-r,0px))!important;
+  background-color:var(--xm-card-bg,rgba(255,255,255,.055))!important;
+}
+/* 外壳那层 border-b border-divider 在直角模式下要抹掉，否则卡片中间横着一根线 */
+html.xm-flat main li[data-index] > div{border-bottom:0!important}
+/* 内层三层底色让开，只留 li 上的卡片底色 */
+html.xm-card main li[data-index] > div,
+html.xm-card main li[data-index] > div > div,
+html.xm-card main li[data-index] > div > div > div{background-color:transparent!important}
+/* 推文上下留白：被裁掉多少就补回多少 */
+html.xm-card main li[data-index] article{
+  padding-top:var(--xm-card-pad,19px)!important;
+  padding-bottom:var(--xm-card-pad,19px)!important;
+}
+html.xm-card main{background-color:transparent!important;background-image:none!important}
+html.xm-flat main{border-left:0!important;border-right:0!important}
+
+/* ── 回复链：组内不裁上下，只给首尾各一刀（与旧版同一套间距算法） ── */
+html.xm-card main li[data-index].xm-thread-top{
+  clip-path:inset(var(--xm-card-gap,15px) var(--xm-card-x,0px) 0 var(--xm-card-x,0px))!important;
+}
+html.xm-card main li[data-index].xm-thread-mid{
+  clip-path:inset(0 var(--xm-card-x,0px) 0 var(--xm-card-x,0px))!important;
+}
+html.xm-card main li[data-index].xm-thread-end{
+  clip-path:inset(0 var(--xm-card-x,0px) var(--xm-card-gap,15px) var(--xm-card-x,0px))!important;
+}
+html.xm-card main li[data-index].xm-thread-top article{
+  padding-top:var(--xm-card-pad,19px)!important;
+  padding-bottom:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+}
+html.xm-card main li[data-index].xm-thread-mid article{
+  padding-top:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+  padding-bottom:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+}
+html.xm-card main li[data-index].xm-thread-end article{
+  padding-top:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
+  padding-bottom:var(--xm-card-pad,19px)!important;
+}
+html.xm-card main li[data-index].xm-joiner{padding-bottom:var(--xm-card-pad,19px)!important}
+html.xm-card main li[data-index].xm-joiner:not(.xm-thread-end){
+  padding-top:var(--xm-card-pad,19px)!important;
+}
+/* 组内补线：X 的线只画到内容区，被 padding 顶成两截，按同一横坐标补一条贯穿线 */
+html.xm-card main li[data-index].xm-thread-top::before,
+html.xm-card main li[data-index].xm-thread-mid::before,
+html.xm-card main li[data-index].xm-thread-end::before{
+  content:"";position:absolute;top:0;bottom:0;left:var(--xm-lx,-99px);
+  width:var(--xm-lw,2px);background:var(--xm-lc,transparent);pointer-events:none;
+}
+html.xm-card main li[data-index].xm-thread-end::before{bottom:auto;height:var(--xm-le,44px)}
+html.xm-card main li[data-index].xm-thread-top::before{top:var(--xm-ls,0px)}
+
+/* ── 杂物与分区条：标记打在 li 上 ── */
+html.xm-noads main li[data-index].xm-noise{display:none!important}
+html.xm-card main li[data-index][data-xm-more-sec]{
+  height:74px!important;min-height:0!important;max-height:74px!important;
+  padding:0!important;margin:0!important;overflow:hidden!important;
+  background-color:transparent!important;
+}
+html.xm-card main li[data-index][data-xm-more-sec] > *{display:none!important}
+html.xm-card main li[data-index][data-xm-more-sec]::after{
+  content:"···";
+  position:absolute;left:50%;top:var(--xm-card-gap,15px);
+  width:88px;height:44px;box-sizing:border-box;
+  transform:translateX(-50%);
+  display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--xm-page-glow,var(--xm-acc-glow,rgba(128,128,128,.3)));
+  border-radius:0;
+  background-color:var(--xm-page-soft,var(--xm-acc-soft,rgba(128,128,128,.12)));
+  font-family:var(--xm-font,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif);
+  font-size:20px;font-weight:700;line-height:1;
+  letter-spacing:.2em;text-indent:.2em;
+  color:var(--xm-page-acc,var(--xm-acc,#1d9bf0));
+  pointer-events:none;
+}
+/* 原生「显示 N 帖子」行：pill.ts 打属性，这里压平（与旧版同一条策略） */
+html.xm-card main li[data-index][data-xm-pill]{
+  height:0!important;min-height:0!important;max-height:0!important;
+  padding:0!important;margin:0!important;
+  border:0!important;box-shadow:none!important;background:none!important;
+  overflow:hidden!important;clip-path:none!important;
+  opacity:0!important;visibility:hidden!important;pointer-events:none!important;
+}
+
+/* ── 直角化：媒体与引用卡 ──
+   新版没有 tweetPhoto / card.* 锚点，只能按「图片来自 /media/」认（头像走 /profile_images/，不会误伤）。
+   ⛔ 别写成 article img 一刀切：那会把头像的 rounded-full 一起铲平。 */
+html.xm-flat main article :is(img[src*="/media/"],video){border-radius:0!important}
+html.xm-flat main article :has(> img[src*="/media/"]){border-radius:0!important;overflow:hidden}
+html.xm-flat main article :has(> video){border-radius:0!important}
+
+/* ── 正文字号：新版的正文容器是 div[dir=auto].whitespace-pre-wrap，没有 testid ── */
+main article div[dir="auto"].whitespace-pre-wrap{font-size:16px!important;line-height:21px!important}
+main article div[dir="auto"].whitespace-pre-wrap *{font-size:inherit!important;line-height:inherit!important}
+
+/* ── 加宽：声明式兜底 ──
+   X 把 --x-main-column-width 声明在 shell 的 class 里（Tailwind arbitrary property），
+   JS 写内联变量会被它的重渲染反复擦掉 —— 实测 4 秒的补扫窗口内经常读到 600。
+   这里用更高特异性直接盖住，节点重建多少次都立刻是设置里的宽度。
+   ⛔ 只盖「不含同类后代的那个最外层」：内层自己也带这个 class（max-lg:max-w-(...)），
+      两层都设会让 grid 两条轨道同时变宽，右栏被挤出去。 */
+html.xm-wide div[class*="--x-main-column-width"]:has(main):not(:has(div[class*="--x-main-column-width"])){
+  --x-main-column-width:var(--xm-feed-w,720px)!important;
+}
+/* 时间线自己还有一层 max-w-(--x-timeline-max-width)，跟着主栏一起放 */
+html.xm-wide main{--x-timeline-max-width:var(--xm-feed-w,720px)!important}
+
+/* ── 图标栏（新版）：X 自己折到 72px，我们只补背板、隐藏项与发帖入口 ──
+   ⛔ 旧版 header 那套 fixed 竖列在新版没有载体，不能照搬：会连主栏一起压窄。
+   ⛔ 折叠与背板都写成声明式，不依赖 JS 打的 class / 内联变量 —— React 重建外壳时
+     那两者会一起被冲掉（实测 class 与内联 --x-sidebar-expanded 都留不住），
+     而 X 自己也是用 class 里的 arbitrary property 声明该变量的，特异性够、能直接盖。
+      72px = 48px 图标 + 两侧 12px，与 X 自己的折叠结果一致。 */
+html.xm-rail div[class*="--x-sidebar-expanded"]:has(nav){
+  --x-sidebar-expanded:0!important;
+  width:72px!important;min-width:72px!important;max-width:72px!important;flex:none!important;
+  background:var(--xm-rail-bg,rgba(0,0,0,.86));
+  -webkit-backdrop-filter:blur(18px) saturate(1.4);
+  backdrop-filter:blur(18px) saturate(1.4);
+}
+/* JS 补充打的 class（切换/回退时用），保留一份等价规则 */
+html.xm-rail .xm-rail-host{
+  background:var(--xm-rail-bg,rgba(0,0,0,.86));
+  -webkit-backdrop-filter:blur(18px) saturate(1.4);
+  backdrop-filter:blur(18px) saturate(1.4);
+}
+/* ── 栏贴窗口左沿 + 主栏居中：这两个要求互斥，必须把栏从文档流里摘出来。
+   X 的外壳是 mx-auto 居中的（实测 vw 1414 时 x=67），里面按 [栏 72][主栏 840][右栏 368] 排满，
+   所以「栏贴边」和「主栏居中」不可能同时靠外壳的 margin 解决：
+     · 外壳居中 ⇒ 栏在 67，左边空一块；
+     · 外壳贴左 ⇒ 栏在 0，但主栏被顶到 72，紧贴栏（用户报的就是这个）。
+   做法：栏 position:fixed 钉视口左侧，占位宽度归零；外壳钉左后按
+   (100vw − 主栏宽) / 2 补左内边距 ⇒ 主栏落在视口正中，栏独自浮在左边留白里。
+   ⛔ 全部挂在 html.xm-rail 下：关掉图标栏即恢复 X 的原生居中，整条可撤销。 */
+html.xm-rail div[class*="--x-sidebar-expanded"]:has(nav){
+  position:fixed!important;left:0!important;top:0!important;
+  height:100dvh!important;z-index:40!important;
+}
+/* 占位归零：栏已经脱离文档流，否则网格还会从 72px 处起算 */
+html.xm-rail div[class~="sm:block"]:has(> div[class*="--x-sidebar-expanded"]){
+  width:0!important;min-width:0!important;flex:none!important;
+}
+html.xm-rail body > div[class*="mx-auto"]:has(main){
+  margin-left:0!important;margin-right:auto!important;
+  /* 96px 保底：窄窗口下 (vw − 主栏) / 2 会小于栏宽，主栏就贴着栏了 */
+  padding-left:max(96px,calc((100vw - var(--xm-feed-w,600px)) / 2))!important;
+}
+/* ── 底部账号菜单：齿轮按钮 fixed 钉在同一位置，两者并存就是重叠（旧版同样收掉
+   SideNav_AccountSwitcher_Button）。新版没有 testid，用 data-slot="xds-menu-trigger" 认；
+   ⛔ 不写在 <html> 全局：只在图标栏的外壳内生效，关掉图标栏账号菜单立刻回来。 */
+html.xm-rail div[class*="--x-sidebar-expanded"] button[data-slot="xds-menu-trigger"],
+html.xm-rail .xm-rail-host button[data-slot="xds-menu-trigger"]{
+  display:none!important;
+}
+/* 隐藏项：特异性要压过 X 自己的 flex / inline-flex，逐类补齐 */
+html.xm-rail nav[aria-label="主要"] .xm-hide,
+html.xm-rail nav[aria-label="主要"] a[href].xm-hide,
+html.xm-rail nav[aria-label="主要"] [role="button"].xm-hide{
+  display:none!important;
+}
+/* 发帖入口：新版是 a[href="/compose/post"]，不带头像也无计数，按 href 认最稳。
+   不依赖 xm-rail —— 展开态下也照样该藏（与旧版 SideNav_NewTweet_Button 同一条策略）。 */
+html.xm-hidecompose nav[aria-label="主要"] a[href="/compose/post"]{display:none!important}
+`;
+
+const CSS = BASE_CSS + SOFT_CSS + QUOTE_CSS + CELL_CARD_CSS + FONT_CSS + LAYOUT_CSS + RAIL_CSS + NEW_CSS;
 
 let injected = false;
 

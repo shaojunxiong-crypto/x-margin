@@ -15,6 +15,7 @@
  *   与钩子同名会把 <html> 一起标成提示行。故状态用 dataset.xmPillState。
  */
 
+import { column, cells as feedCells } from './sel';
 import { syncPageAccent } from './theming';
 
 /** 打在原生提示行上的钩子：样式表据此把它压成 0 高 */
@@ -31,8 +32,6 @@ const EN_RE = /^(show\s+)?\d+\s+(new\s+)?posts?$/i;
  *  它是提示行的另一种形态（X 按版本/实验在两者间切换），同样要接管 ——
  *  ⛔ 只收掉不接管 = 提示彻底消失（v0.1.84 的教训）。 */
 const TOAST_RE = /^(查看新帖子|see\s+new\s+posts?|show\s+new\s+posts?)$/i;
-/** 文案里带数字 ⇒ 一定不是「已发布」回执，不要走 toast 分支 */
-const COUNT_RE = /\d/;
 
 /** 文案长度上限：超过这个长度必然是正文，不是提示行 */
 const LABEL_MAX = 24;
@@ -78,7 +77,7 @@ function labelOf(btn: HTMLElement): string {
 
 /** 从按钮上溯到「这一行」：cell 内就取 cell，浮层形态取 role=status */
 function rowOf(el: HTMLElement): HTMLElement {
-  const cell = el.closest<HTMLElement>('[data-testid="cellInnerDiv"]');
+  const cell = el.closest<HTMLElement>('[data-testid="cellInnerDiv"], li[data-index]');
   if (cell) return cell;
   const status = el.closest<HTMLElement>('[role="status"]');
   return status ?? el;
@@ -175,7 +174,7 @@ function withCount(label: string, from: HTMLElement): string | null {
  * 头部 cell 是主路径：真机上「显示 N 帖子」就是时间线的第 0 条 cell。
  */
 function scan(col: HTMLElement, now: number): Hit | null {
-  const cells = col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]');
+  const cells = feedCells(col);
   const head = Math.min(cells.length, HEAD_CELLS);
   for (let i = 0; i < head; i++) {
     const hit = hitIn(cells[i]);
@@ -283,17 +282,18 @@ function teardown(): void {
 
 /**
  * X 自己的浮层提示，两类都和我们重复，留着就是双份：
- * ① 「查看新帖子」胶囊（`[data-testid="pillLabel"]`）—— 先由 pill 管线接管，
- *    只有接管失败时才在这里收掉；
+ * ① 「查看新帖子」胶囊（`[data-testid="pillLabel"]`）—— 浮条停用后整块收掉；
  * ② 「已发布 / Posted」回执胶囊（`[data-testid="toast"]`，里面没有 pillLabel）—— 直接收。
  * ⛔ 只认「短文本 + 回执措辞」，绝不按 testid 无差别隐藏 toast ——
  *   发送失败、网络错误等提示必须让用户看见。
- * ⛔ 带数字的文案一律不进这里（见 COUNT_RE）：那是新推计数提示的本体。
+ * ⛔ 新推胶囊按「是不是浮层」判，不按文案判：带不带计数一律收（主人 2026-11-22 定）。
  */
 const TOAST_ATTR = 'data-xm-toast';
 /** 「已发布 / 已发送 / Posted / Your post was sent」这类回执，文本很短 */
 const POSTED_RE = /^(已发布|已发送|已投递|posted|sent|your\s+post\s+was\s+sent|your\s+post\s+was\s+posted)$/i;
 let lastToastScan = -1e9;
+/** 全列按文案兜底扫描的时间戳（比 cell 快路径贵，单独降频） */
+let lastDeepScan = -1e9;
 
 /** 上溯到「浮层本体」：第一个 fixed/absolute 祖先，但高度超过 140 就停 */
 function climbToOverlay(from: HTMLElement): HTMLElement {
@@ -309,16 +309,49 @@ function climbToOverlay(from: HTMLElement): HTMLElement {
   return pick ?? from;
 }
 
+/**
+ * 按文案认提示行本体。
+ * ⛔ 新版 X 把「显示 N 帖子」渲染成一段**纯文本**：既不是 button，也没有 pillLabel，
+ *    只按 testid / role 找必然漏 —— 表现就是提示原样露在时间线顶上（2026-11-22 现场）。
+ * 只在主栏前三条 cell 的叶子里找，成本可忽略；命中后交给调用方上溯到浮层本体。
+ */
+function findPillText(col: HTMLElement): HTMLElement | null {
+  const matchLeaf = (root: ParentNode): HTMLElement | null => {
+    for (const el of Array.from(root.querySelectorAll<HTMLElement>('span,div,p'))) {
+      if (el.children.length) continue; // 只看叶子，避免整段正文
+      const t = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > LABEL_MAX) continue;
+      if (CN_RE.test(t) || EN_RE.test(t) || TOAST_RE.test(t)) return el;
+    }
+    return null;
+  };
+
+  // 快路径：真机上提示行就是时间线的第 0 条 cell
+  const cells = feedCells(col);
+  for (let i = 0; i < Math.min(cells.length, 3); i++) {
+    const hit = matchLeaf(cells[i]);
+    if (hit) return hit;
+  }
+  // 兜底：不在 cell 里（新版把它挂在标签栏下方独立一层）时全列扫，降频 2s 一次
+  const now = performance.now();
+  if (now - lastDeepScan < 2000) return null;
+  lastDeepScan = now;
+  return matchLeaf(col);
+}
+
 function markNativeToast(): void {
   const now = performance.now();
-  if (now - lastToastScan < 1000) return;
+  // 400ms：标记会随虚拟列表重建而丢失，间隔太长就是肉眼可见的「闪一下又出来」
+  if (now - lastToastScan < 400) return;
   lastToastScan = now;
 
   // ① 关注列表的「查看新帖子」胶囊
   for (const label of Array.from(document.querySelectorAll<HTMLElement>('[data-testid="pillLabel"]'))) {
     if (label.closest(`[${PILL_ATTR}]`)) continue;
     const text = (label.textContent ?? '').replace(/\s+/g, ' ').trim();
-    if (text && (!TOAST_RE.test(text) || COUNT_RE.test(text))) continue;
+    // ⛔ 这里不再区分「带数字 / 不带数字」：主人已明确不要任何新推提示，
+    //    连「显示 70 帖子」这种带计数的也一并收掉，页面上不留空条。
+    if (!text) continue;
     const target = climbToOverlay(label);
     // 安全阀：上溯上来的若是「一块内容」而不是一颗小浮层，宁可不收。
     // 整块 display:none 很容易把主栏内容一起带走，且看不出是谁干的。
@@ -326,6 +359,17 @@ function markNativeToast(): void {
       continue;
     }
     if (!target.hasAttribute(TOAST_ATTR)) target.setAttribute(TOAST_ATTR, '');
+  }
+
+  // ①-b 纯文本形态（新版 X）：按文案找，命中就上溯到浮层本体整块收掉
+  const col = column();
+  const leaf = col ? findPillText(col) : null;
+  if (leaf && !leaf.closest(`[${TOAST_ATTR}]`)) {
+    const target = climbToOverlay(leaf);
+    // 安全阀同 ①：上溯成「一块内容」就不收，宁可留着也不吞主栏
+    if (target === leaf || (target.getBoundingClientRect().height <= 96 && !target.querySelector('article'))) {
+      target.setAttribute(TOAST_ATTR, '');
+    }
   }
 
   // ② 发帖后的「已发布」回执：根节点自带 testid，整颗收掉即可，不用上溯
@@ -351,6 +395,30 @@ function markNativeToast(): void {
 }
 
 /**
+ * 停用提示浮条（主人 2026-11-22：「彻底把这个提示去掉」）。
+ *
+ * 停用后：不接管 X 的原生提示行、不画我们的胶囊，同时把 X 自己的
+ * 「显示 N 帖子」整块收掉 —— 页面上既不出现浮条，也不留一条空白。
+ * 清标记是必须的：旧版本给节点打过 PILL_ATTR / TOAST_ATTR，
+ * 样式表靠属性压 display，不清就会继续显示成空条。
+ */
+export function killPill(): void {
+  if (bar) {
+    bar.remove();
+    bar = null;
+    barText = null;
+    barLabel = '';
+  }
+  clearRow();
+  nativeBtn = null;
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[${PILL_ATTR}]`))) {
+    el.removeAttribute(PILL_ATTR);
+  }
+  document.documentElement.dataset.xmPillState = 'off';
+  markNativeToast();
+}
+
+/**
  * 每轮补扫调用。命中就接管原生行、显示浮条；没命中就让浮条再撑一会
  * （原生按钮可能只是被虚拟列表回收，用户没点之前不该自己消失）。
  */
@@ -360,7 +428,7 @@ export function markPill(): void {
     if (nativeRow || bar) teardown();
     return;
   }
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) {
     if (nativeRow || bar) teardown();
     return;

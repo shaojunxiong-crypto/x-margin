@@ -3,11 +3,12 @@ import { initAnchor } from './anchor';
 import { BackgroundLayer } from './bg/background';
 import { applyFlat, clearCardWrappers, reflowCards, resetReflowBase, resetThreadSig, setFeedFrozen } from './feed';
 import { injectFonts } from './fonts';
-import { applyLayout, markComposer, markFloats, widenInner } from './layout';
+import { applyLayout, markComposer, markFloats, syncWidthVar, widenInner } from './layout';
 import { markPageHead } from './pageHead';
-import { markPill } from './pill';
+import { killPill } from './pill';
 import { createPanel, type PanelApi } from './panel';
 import { applyRail, railItems } from './rail';
+import { column, navRoot } from './sel';
 import { initShot } from './shot';
 import { initStage } from './stage';
 import { injectBase } from './styles';
@@ -16,13 +17,32 @@ import { applyAccent, applyFont, applySkin, detectTheme, type Theme } from './th
 
 /** 首次开启图标栏时保留的图标个数（含顶部的 X logo） */
 const RAIL_KEEP = 5;
-/** 预置版本：2 起把 role=button 型导航项也纳入裁剪 */
-const RAIL_SEED_V = 2;
+/**
+ * 预置版本。2 起把 role=button 型导航项也纳入裁剪；
+ * 3 起按**新版的 href 键**重灌一次 —— 旧版键是 testid（`t:SideNav_...`），
+ * 在新版一个都匹配不上，表现就是「隐藏项全失效、12 个按钮全露着」。
+ * 4 修 3 的时序 bug：3 跑在 boot 早期，nav 只渲染出 3 项就满足 `items.length > keep`
+ * 直接结算了，结果只藏了 3 项。
+ * 5 再修一次：4 只要求「≥6 项」，实测 8 项时就结算了（漏掉「更多」等后渲染的项）。
+ * 现在要求连续 3 轮项数不变。
+ */
+const RAIL_SEED_V = 5;
 
 let bg: BackgroundLayer;
 let settings: Settings;
 let theme: Theme = 'dark';
 let ui: PanelApi | null = null;
+
+/**
+ * 把异常留在 html 的 dataset 上。
+ * 扩展在隔离世界跑，控制台默认不在这儿，用户报「失效」时没有任何线索；
+ * 留一行最短的错误摘要，排查时 `document.documentElement.dataset.xmErr` 直接读得到。
+ */
+function noteErr(where: string, e: unknown): void {
+  const msg = e instanceof Error ? `${where}: ${e.message}` : `${where}: ${String(e)}`;
+  document.documentElement.dataset.xmErr = msg.slice(0, 160);
+  console.warn('[x-margin]', where, e);
+}
 
 /**
  * 滚动窗口：滚动中、以及停滚后 220ms 内，所有「全量扫描」类工作一律让路。
@@ -60,7 +80,7 @@ function sync(): void {
   // 二级页页头（通知 / 历史），只在那些路由下动，切走会自动还回去
   markPageHead();
   // 「显示 N 帖子」提示行：按文案认出来，交给样式表做成顶栏下沿的一条带
-  markPill();
+  killPill();
   applyRail(s.layout.railNav, theme, s.layout.railHide, s.layout.hideCompose);
   markComposer(s.layout.hideCompose);
   // 齿轮按钮跟着图标栏在「栏内」与「浮动球」之间搬
@@ -72,23 +92,48 @@ function sync(): void {
  * 首次启用图标栏时给 railHide 灌默认值：保留前 RAIL_KEEP 项，其余收起。
  * 与已有设置合并，用户手动勾过的项不会被重置。
  */
+/** seedRail 是否在跑：tick 每 300ms 会来问一次，不挡住就会并发灌同一份默认值 */
+let seeding = false;
+
 async function seedRail(): Promise<void> {
+  if (seeding) return;
   if (!settings.layout.railNav || settings.layout.railSeedV >= RAIL_SEED_V) return;
-  // X logo 在 h1 里、不在 nav 内时，nav 侧只需保留 4 项
-  const logoInNav = !!document.querySelector<HTMLElement>('header[role="banner"] nav a[href="/"]');
-  const keep = logoInNav ? RAIL_KEEP : RAIL_KEEP - 1;
-  for (let i = 0; i < 24; i++) {
-    const items = railItems();
-    if (items.length > keep) {
-      const merged = new Set(settings.layout.railHide);
-      items.slice(keep).forEach((x) => merged.add(x.key));
-      const layout = { ...settings.layout, railHide: [...merged].slice(0, 40), railSeedV: RAIL_SEED_V };
-      settings = { ...settings, layout };
-      await saveSettings({ layout });
-      sync();
-      return;
+  // 新版没有 header，导航项在 nav[aria-label="主要"] 里 —— 两套都认，否则新版永远不灌默认值
+  if (!document.querySelector('header[role="banner"]') && !document.querySelector('nav[aria-label="主要"]')) return;
+  seeding = true;
+  try {
+    // X logo 在 h1 里、不在 nav 内时，nav 侧只需保留 4 项；新版侧栏没有 logo 项，按 5 项算
+    const hasHeader = !!document.querySelector('header[role="banner"]');
+    const logoInNav = !!navRoot()?.querySelector('a[href="/"]');
+    const keep = !hasHeader || logoInNav ? RAIL_KEEP : RAIL_KEEP - 1;
+    /** 一栏完整的导航至少有这么多项；少了说明 nav 还在渲染，这时候结算会把没渲染的项当不存在 */
+    const MIN_ITEMS = 6;
+    /** 项数连续这么多轮不变才认「已经渲染完」—— 曾按「够 5 项就结算」写过，结果只藏了一半 */
+    const STABLE_ROUNDS = 3;
+    let prevLen = -1;
+    let stable = 0;
+    for (let i = 0; i < 24; i++) {
+      const items = railItems();
+      if (items.length >= MIN_ITEMS && items.length > keep) {
+        if (items.length === prevLen) stable += 1;
+        else { prevLen = items.length; stable = 1; }
+        if (stable >= STABLE_ROUNDS) {
+          const merged = new Set(settings.layout.railHide);
+          items.slice(keep).forEach((x) => merged.add(x.key));
+          const layout = { ...settings.layout, railHide: [...merged].slice(0, 40), railSeedV: RAIL_SEED_V };
+          settings = { ...settings, layout };
+          await saveSettings({ layout });
+          sync();
+          return;
+        }
+      } else {
+        prevLen = -1;
+        stable = 0;
+      }
+      await new Promise((r) => setTimeout(r, 500));
     }
-    await new Promise((r) => setTimeout(r, 500));
+  } finally {
+    seeding = false;
   }
 }
 
@@ -131,7 +176,7 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
       applyFlat(true);
       // 二级页页头会被 X 重建，跟着补一次（条目留白是 CSS，不在这里管）
       markPageHead();
-      markPill();
+      killPill();
       if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
       // ⛔ 每轮都要重判：详情页主帖的 article 常晚于面板出现，跳过重判会让误藏的主帖
       // 永久锁在 display:none 里（v0.1.91 修）。
@@ -188,7 +233,13 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
   }, true);
   void document.fonts?.ready.then(() => queueReflow());
 
-  const tick = () => {
+  /**
+   * 心跳本体。
+   * ⛔ 外层必须包 try/catch：这里挂的是各模块的「补扫」，任何一处抛异常都会让
+   *    requestAnimationFrame 链断掉，此后布局、加宽、图标栏、主题**全部永久停摆** ——
+   *    现象是「刷新后偶尔好使、偶尔整页裸奔」，极难归因（2026-11-24 修）。
+   */
+  const tickBody = () => {
     const now = performance.now();
     // 心跳只留最便宜的两件事：主题、齿轮有没有被冲掉
     if (now - lastThemeCheck > 1500) {
@@ -197,7 +248,7 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
       if (t !== theme) { theme = t; sync(); }
       // 祖先链被重建后内联底色会丢，重新刷一遍
       if (settings.bg.mode !== 'off') {
-        const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+        const col = column();
         if (col && col.parentElement && col.parentElement.style.backgroundColor !== 'transparent') {
           applySkin(theme, true, settings.bg.glass, settings.softText, settings.layout.cardFeed);
           queueReflow();
@@ -208,11 +259,21 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
     // 主栏身份变化：一次 querySelector，代价可忽略
     if (now - lastWideBind > 300) {
       lastWideBind = now;
-      rebind(document.querySelector<HTMLElement>('[data-testid="primaryColumn"]'));
+      rebind(column());
       bindWide();
       // 提示行的显隐往往只改 display / transform，不产生 childList 变动，
       // 观察器看不到；300ms 一次的这条路是它的兜底。
-      markPill();
+      killPill();
+      // 图标栏同理且更要紧：boot 时 nav 往往还没渲染，applyRail 当场落空就再也没有第二次机会
+      // （scan 只跟主栏 childList 走，页面静止后不再触发）。实测表现就是「折叠没发生、
+      // 栏里 12 个按钮一个没藏、齿轮留在栏外」（2026-11-24 修）。
+      // 内部全是值比较，稳态零写入。
+      if (settings.layout.railNav) {
+        applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
+        // 默认隐藏清单没灌成过（railSeedV 落后）就继续试：boot 那一趟往往赶在 nav 渲染之前，
+        // 一次失败就再也不会重试，而旧版 testid 键在新版一个都匹配不上 ⇒ 整栏按钮全露着。
+        if (settings.layout.railSeedV < RAIL_SEED_V) void seedRail();
+      }
     }
     if (reflowDue && settings.layout.cardFeed) {
       reflowDue = false;
@@ -220,11 +281,29 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
     }
     if (settings.layout.feedWidth !== 600 && now - lastWideCheck > 4000) {
       lastWideCheck = now;
-      widenInner();
+      // 新版宽度靠 --x-main-column-width 喂 grid 轨道，而 X 重建主栏外壳时会把内联变量一起冲掉
+      // （路由切换、首屏渲染完成）。sync() 只在启动与改设置时跑 ⇒ 那时设置里是 840、
+      // 主栏却回到 600，要等下次动设置才复位。这里补一次，两处都带值比较，稳态零写入。
+      if (!syncWidthVar(settings.layout.feedWidth)) widenInner();
+    }
+  };
+
+  const tick = () => {
+    try {
+      tickBody();
+    } catch (e) {
+      // 单帧失败不能让心跳链断掉：记一笔、继续排下一帧
+      noteErr('tick', e);
     }
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+  // 后台标签页 / 最小化窗口里 rAF 会被浏览器暂停，心跳整套停摆 ——
+  // 切回前台时先补一帧，别让用户看到「刚回来那一瞬」还是 12 个按钮全露着的样子。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    try { tickBody(); } catch (e) { noteErr('resume', e); }
+  });
 }
 
 async function boot(): Promise<void> {
@@ -286,7 +365,7 @@ async function boot(): Promise<void> {
     }, delay);
   };
   const bindWide = (): void => {
-    const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+    const col = column();
     if (!col) return;
     if (col === wideCol && col.isConnected) return;
     wideMo?.disconnect();
@@ -310,4 +389,4 @@ async function boot(): Promise<void> {
   void seedRail();
 }
 
-void boot();
+void boot().catch((e) => noteErr('boot', e));

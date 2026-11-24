@@ -32,6 +32,7 @@ src/
     styles.ts            注入 X 的全部 CSS（都挂在 html 的开关类上）
     theming.ts           主题、玻璃、强调色、字体
     layout.ts            去右栏 / 加宽 / 浮层隐藏 / 发推面板
+    sel.ts               锚点适配层：旧版 testid 与新版结构的唯一出处
     rail.ts              图标导航栏
     feed.ts              去线条与圆角、抹底板、虚拟列表重排
     panel.ts             设置面板与齿轮入口
@@ -60,7 +61,7 @@ scripts/make-icons.mjs   图标生成（矢量渲染，不依赖位图放大）
 | 外观 | 文字柔化 | 默认开；深色下把主文字从 `#f7f9f9` 压到 `#c8ced3`，对比度 19.9:1 → 13.2:1 |
 | 外观 | 强调色（6 个预设 + 取色器） | 只作用于 X Margin 自己的界面：齿轮、开关、滑块、选中态、色板 |
 | 布局 | 隐藏右侧栏 | 默认开；主栏在导航右侧的剩余区域里居中 |
-| 布局 | 图标导航栏 | 默认开；左侧导航压成 76px 宽的图标竖列，钉在窗口最左边 |
+| 布局 | 图标导航栏 | 默认开；左侧导航折成 72px 宽的图标竖列，钉在窗口最左边 |
 | 布局 | 隐藏滚动条 | 默认开；只隐藏窗口（根滚动容器）那条，滚轮 / 键盘 / 触控板照常；弹窗、私信、设置页内部的滚动条保留 —— 那里没有滚动条就完全看不出「还有内容」 |
 | 布局 | 隐藏浮动按钮 | 默认开；右下角 Grok 与私信气泡两个固定层一起收起（压在时间线右下角，挡内容） |
 | 布局 | 隐藏发推入口 | 默认开；时间线顶部的发推面板 + 左侧栏发帖按钮一起收掉（不发推的人用不上；关掉即全部还原） |
@@ -78,6 +79,72 @@ scripts/make-icons.mjs   图标生成（矢量渲染，不依赖位图放大）
 设置存在 `chrome.storage.sync`，多标签页即时同步；图片背景存在 `chrome.storage.local`。
 
 ## 实现要点
+
+### X 换了一版前端：锚点全部重来
+
+2026-11，X 把 Web 端整体换成 Tailwind 重写版（资源路径 `abs.twimg.com/x-web`）。`data-testid` 从上百个掉到 2 个（只剩 `SearchBox_Search_Input` 与 `premium-signup-tab`），`primaryColumn` / `cellInnerDiv` / `article[data-testid="tweet"]` 全部消失 —— 样式照常注入，但一条都命中不了，表现就是「扩展还装着，但像没装」。
+
+新旧锚点对照（实测 vw 1407）：
+
+| 用途 | 旧 | 新 |
+|---|---|---|
+| 主栏 | `[data-testid="primaryColumn"]` | `main`（全页唯一） |
+| 时间线格子 | `[data-testid="cellInnerDiv"]` | `ul > li[data-index]`（仍是 `position:absolute` + `translateY`） |
+| 格子的可点外壳 | — | `li > div[role="link"][data-href="/user/status/id"]` |
+| 推文本体 | `article[data-testid="tweet"]` | `article`（嵌套即引用卡） |
+| 头像 | `Tweet-User-Avatar` | `div[data-post-avatar="true"]` |
+| 左导航 | `header[role="banner"]` | `nav[aria-label="主要"]` |
+| 右栏 | `[data-testid="sidebarColumn"]` | `aside` |
+
+这些全部收敛在 `src/content/sel.ts`，**旧锚点一律保留作首选**（X 灰度发布，两种客户端会同时在线），新版只在旧锚点缺失时回落。⛔ 新模块不要再自己写这几类选择器。
+
+两处顺带简化：
+
+- **加宽**不再逐层打 `.xm-wide-el`。新版主栏宽度由 `--x-main-column-width` 喂 grid 轨道，把变量写回**定义它的那一层**（最外层 `div.mx-auto.flex`，class 里带 `[--x-main-column-width:600px]`）即可 600 → 840。写在 `main` 或 `<html>` 上都不生效：前者被 grid 轨道定死，后者被 shell 自己的声明盖掉。
+- **图标栏**不再压 X 的 header。新版自带折叠，宽度是 `calc(72px + 184px * var(--x-sidebar-expanded,0))`，把变量拧到 0 就是 72px 图标条 —— 不碰任何节点，也不会被 React 重渲染冲掉。
+
+还没接回来的：`placementTracking` 没了，**推广推文暂时收不掉**；`pillLabel` 没了，提示条只走 pill.ts 的按文案扫描；引用卡的 16px 圆角、通知条目的留白也只能先挂着。
+
+### 0.2.1：三处「JS 抢不过 React」
+
+v0.2.0 把锚点收敛完，真机上还有三个毛病，根因是同一个：**凡是用内联样式 / DOM class 去改 X 的容器，React 一重渲染就没了**，于是只能靠心跳一遍遍补，补的过程本身就是抖动源。
+
+| 现象 | 真因 | 现在的做法 |
+|---|---|---|
+| 推文流每 ~700ms 抖一下，文档高度跳 109px | `markComposer` 每 400ms 重算；发帖面板被我们 `display:none` 后，里面的按钮量出来 0×0 → 判 `miss` → 摘 class → 面板露出 → 下轮又判 `ok`。一判一摘，来回翻 | ① 发帖按钮**缓存节点**，`isConnected` 就直接复用，不再读几何；② 候选落在 `.xm-comp-hide` 里时跳过尺寸校验；③ `ok` 要连续两轮失败才降级；④ 同路由 + 目标仍连接时整轮早退 |
+| 左栏按钮的位置与隐藏全失效 | `applyRail` 只在启动与主栏 childList 变动时跑，**boot 那一刻 nav 还没渲染**，之后再无重试；且 `railHide` 里存的还是旧版 `t:AppTabBar_*` 键，新版一个都匹配不上 | 心跳 300ms 分支补调 `applyRail`；`railNodes` 加 `nav[aria-label="主要"]` 与原生 `button`；折叠/背板/齿轮位置改走**声明式 CSS** 与 `--xm-rail-left`；默认隐藏清单按新键重灌（要求连续 3 轮项数不变才结算） |
+| 设置里选 840，主栏仍是 600 | 内联变量被 shell 重渲染擦掉，4 秒的补扫窗口内经常读到 600 | CSS 兜底：`html.xm-wide div[class*="--x-main-column-width"]:has(main):not(:has(div[…]))` 直接盖住，只作用在最外层，不挤压 grid 轨道 |
+
+顺带两条硬规矩：
+
+- **心跳必须包 try/catch**。`tick` 里挂的是各模块的补扫，任何一处抛异常都会让 `requestAnimationFrame` 链断掉 —— 之后布局、加宽、图标栏、主题**全部永久停摆**，表现成「刷新后偶尔好使、偶尔整页裸奔」。
+- **异常落在 `html.dataset.xmErr`**。扩展跑在隔离世界，控制台默认不看那里；留一行 160 字的摘要，用户报「失效」时能直接读。
+- 后台标签页的 rAF 会被浏览器暂停，心跳整套停摆 —— 这不算 bug（看不见就不需要刷新），但切回前台时补跑一帧，避免刚回来那一瞬还是未处理的画面。
+
+
+### 0.2.2 / 0.2.3：图标栏贴边，主栏居中
+
+这两条要求**互斥**，0.2.2 只做了前一条，结果把主栏顶到栏边上（用户当场报回来），0.2.3 才拆开。
+
+X 的外壳是 `mx-auto` 居中的（vw 1414 时外壳 1280、落在 x=67），里面按 `[栏 72][主栏 840][右栏 368]` 排满 1280，所以：
+
+- 外壳居中 ⇒ 栏在 67，左边空一块；
+- 外壳贴左 ⇒ 栏在 0，主栏被顶到 72，紧贴栏。
+
+| 做法 | 规则 |
+|---|---|
+| 栏脱离文档流、钉在视口左侧 | `html.xm-rail div[class*="--x-sidebar-expanded"]:has(nav){position:fixed;left:0;top:0;height:100dvh;z-index:40}` |
+| 占位归零（否则网格还从 72px 起算） | `html.xm-rail div[class~="sm:block"]:has(> div[class*="--x-sidebar-expanded"]){width:0}` |
+| 外壳钉左 + 补左内边距，主栏落在视口正中 | `margin-left:0` ＋ `padding-left:max(96px,calc((100vw - var(--xm-feed-w,600px)) / 2))` |
+
+实测（vw 1414、主栏 840）：栏 `x=0 w=72`，主栏 `x=287..1127`，中心 707 = 视口中心 707；`--xm-rail-left` 随之变 0，齿轮与面板沿用原公式即自动居中。96px 是窄窗口的保底（`(vw − 主栏) / 2` 会小于栏宽，主栏就又贴上了）。
+
+另外两条：
+
+- 底部重叠的是 X 自己的账号菜单（`button[data-slot="xds-menu-trigger"]`，头像那颗，在栏底 `.mt-auto` 容器里），图标栏模式下收掉（旧版收的 `SideNav_AccountSwitcher_Button` 是同一个东西），规则只挂 `html.xm-rail`，关掉图标栏即复原。
+- **不能用 `div[class*="--x-main-column-width"]:has(main):not(:has(…))` 选外壳**：外壳与内层 grid 都带这个 class，外壳因为「含有同类后代」被 `:not()` 排除，那条规则永远不落地。选外壳只能用 `body > div[class*="mx-auto"]`。
+
+调试提醒：本机的「插件管理」是夸克自绘的 React 面板，不是 `chrome://extensions`，没有「重新加载」按钮。改完 `dist` 后要重载扩展，必须**定向**调 x-margin 自己的 service worker（`flbbcjlgmce…`）里的 `chrome.runtime.reload()`；按 `chrome-extension://` 前缀随便取第一个 SW 会命中「资源检测」，于是白改半天 —— 页面里读到的 manifest 版本号就是最快的判据（版本没变＝重载的不是它）。
 
 ### 背景怎么铺到 X 底下
 
@@ -141,13 +208,13 @@ X 的主题不是靠一层 CSS 变量撑起来的：正文颜色、底纹、分�
 
 ### 设置入口为什么钉在窗口左下角
 
-齿轮放在我们自己的 `.xm-root` 里，图标栏模式下用 `position:fixed; left:12px; bottom:16px` 钉到窗口左下角（栏宽 76px、按钮 52px，居中即 12px）。
+齿轮放在我们自己的 `.xm-root` 里，图标栏模式下用 `position:fixed; left:calc(var(--xm-rail-left) + var(--xm-rail-in)); bottom:16px` 钉到窗口左下角：`--xm-rail-left` 是栏的**实测**左边界（`rail.ts` 300ms 同步一次），`--xm-rail-in` 是栏内居中所需的 10px（72 − 52 的一半）。⛔ 不要写死 `left:12px`：新版外壳居中、贴边与否都会变，写死就跑到栏外。
 
 **不要再塞进 `header nav`**：那条路要借「账户头像」那个带 `margin-top:auto` 的吸底容器定位，而账户按钮已经被隐藏，容器会塌陷或被 `overflow` 裁切 —— 实际表现就是头像没了、齿轮也跟着不见。`fixed` 只认视口，跟 X 的 DOM 怎么改都无关；`.xm-root` 上没有 `transform`/`filter`，不会破坏 fixed 的包含块。
 
 `place(railOn)` 现在只切 `data-rail` 和确保按钮挂在自己的 root 里，节点不离开 root，X 重渲染 nav 也清不掉它。关掉图标栏时 `place(false)` 把 `data-rail` 置 0，回到右下角浮动球。
 
-面板本身也分两套定位：图标栏开着时贴左（`left:88px`，避让 76px 的栏），关掉时贴右下 —— 且必须 `bottom:152px` 让开球体（46px + 上下留白），否则面板打开后正好盖住按钮，点不到关不掉。
+面板本身也分两套定位：图标栏开着时贴左（`left:calc(var(--xm-rail-left) + 84px)`，避让 72px 的栏），关掉时贴右下 —— 且必须 `bottom:152px` 让开球体（46px + 上下留白），否则面板打开后正好盖住按钮，点不到关不掉。
 
 ### 未读角标为什么会被吃掉
 

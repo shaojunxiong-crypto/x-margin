@@ -18,6 +18,7 @@
  */
 
 import { anchorSettled } from './anchor';
+import { cells as feedCells, column } from './sel';
 import { feedSettled } from './feed';
 
 /** 最短显示：低于这个值像闪了一下，反而更显眼 */
@@ -46,13 +47,9 @@ let lastPath = location.pathname;
 
 const segs = (p: string): number => p.split('/').filter(Boolean).length;
 
-function column(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
-}
-
 /** 布局指纹：数量 + 总高 + 首条位置。首条位置能抓到「高度没变但整体平移」的重排 */
 function sample(col: HTMLElement): string {
-  const cells = col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]');
+  const cells = feedCells(col);
   const top = cells.length ? Math.round(cells[0].getBoundingClientRect().top) : 0;
   return `${cells.length}|${Math.round(col.scrollHeight)}|${top}`;
 }
@@ -116,7 +113,7 @@ function frame(): void {
   }
 
   const ready = !!col
-    && col.querySelector('[data-testid="cellInnerDiv"]') !== null
+    && feedCells(col).length > 0
     && now - lastDirty >= QUIET_MS
     && now - startedAt >= MIN_MS
     && anchorSettled()

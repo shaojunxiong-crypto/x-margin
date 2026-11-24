@@ -3,6 +3,8 @@
  * 涉及结构的判断一律在 JS 里做（X 的嵌套深度每个版本都在变），CSS 只认自有 class。
  */
 
+import { avatarOf, cellOf as anchorCellOf, cells as feedCells, column, tweets as feedTweets } from './sel';
+
 const FLAT_CELL_CLS = 'xm-cell-flat';
 const JOINER_CLS = 'xm-joiner';
 const NOISE_CLS = 'xm-noise';
@@ -54,10 +56,10 @@ function wipeCardBg(el: HTMLElement): void {
   if (img && img !== 'none') el.style.setProperty('background-image', 'none', 'important');
 }
 
-/** 推文所在 cell：优先用 X 的 testid，认不到就往上找「接近主栏宽度」的那层 */
+/** 推文所在 cell：优先走适配层，认不到就往上找「接近主栏宽度」的那层 */
 function cellOf(article: HTMLElement, col: HTMLElement, cw: number): HTMLElement | null {
-  const byTestId = article.closest<HTMLElement>('[data-testid="cellInnerDiv"]');
-  if (byTestId) return byTestId;
+  const byAnchor = anchorCellOf(article);
+  if (byAnchor) return byAnchor;
   let el: HTMLElement | null = article.parentElement;
   for (let i = 0; el && el !== col && i < 6; i++, el = el.parentElement) {
     const r = el.getBoundingClientRect();
@@ -78,7 +80,7 @@ function threadLink(article: HTMLElement, cell: HTMLElement): ThreadLink {
   const ar = article.getBoundingClientRect();
   if (ar.height < 24) return link;
   const cr = cell.getBoundingClientRect();
-  const av = article.querySelector<HTMLElement>('[data-testid="Tweet-User-Avatar"]');
+  const av = avatarOf(article);
   const avr = av?.getBoundingClientRect();
   const axis = avr && avr.width ? avr.left + avr.width / 2 : null;
   const EDGE = 26; // 线端离推文边界的容差；必须大于 --xm-card-pad（19px），否则线被 padding 顶开就认不出
@@ -114,7 +116,7 @@ function alphaOf(color: string): number {
 
 /** 每条 cell 的第一层推文；引用推文里的 article 不算一条独立推文 */
 function topTweetOf(cell: HTMLElement): HTMLElement | null {
-  return cell.querySelector<HTMLElement>('article[data-testid="tweet"]');
+  return feedTweets(cell)[0] ?? null;
 }
 
 /**
@@ -148,7 +150,7 @@ let lastNoiseScan = -1e9;
  * 有人在正文里讨论「垃圾信息」「who to follow」不算。
  */
 function isNoise(cell: HTMLElement): boolean {
-  if (cell.querySelector('article[data-testid="tweet"]')) return false;
+  if (cell.querySelector('article')) return false;
   if (cell.querySelector('[data-testid="UserCell"]')) return true;
   const txt = (cell.textContent || '').trim();
   if (!txt) return false;
@@ -174,11 +176,11 @@ export function markNoise(): void {
   const now = performance.now();
   if (now - lastNoiseScan < 600) return;
   lastNoiseScan = now;
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
   const on = html.classList.contains('xm-noads');
   let touched = 0;
-  col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
+  feedCells(col).forEach((cell) => {
     const marked = cell.classList.contains(NOISE_CLS);
     // 关闭开关时一律不成立，走「摘掉」分支
     const hit = on && isNoise(cell);
@@ -226,7 +228,7 @@ let lastMoreScan = -1e9;
  * ⛔ 撤销同样要补 reflowCards：锁定的 74px 恢复成自然高度，后面的 translateY 全错。
  */
 export function markMoreSection(): void {
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
   const now = performance.now();
   if (now - lastMoreScan < 600) return;
@@ -234,7 +236,7 @@ export function markMoreSection(): void {
   let touched = 0;
   // 样式只在卡片模式下生效；关掉卡片就一律摘，别把属性留给下次开卡
   const card = document.documentElement.classList.contains('xm-card');
-  col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
+  feedCells(col).forEach((cell) => {
     const marked = cell.dataset[MORE_SEC_ATTR] === '1';
     const hit = card && isMoreSection(cell);
     if (hit === marked) return;
@@ -309,14 +311,14 @@ function setVar(el: HTMLElement, name: string, value: string): void {
  */
 export function markThreads(): void {
   if (frozen) return;
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
   // 裁切只在卡片模式下存在，没开卡片就不用分组
   if (!document.documentElement.classList.contains('xm-card')) return;
   // 高度 0 的是被隐藏的推广 / 折叠项：不占位，也不该把回复链断开
   const cells: HTMLElement[] = [];
   let sum = 0;
-  for (const c of col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]')) {
+  for (const c of feedCells(col)) {
     const h = c.offsetHeight;
     if (h === 0) continue;
     cells.push(c);
@@ -391,7 +393,7 @@ export function markThreads(): void {
   const targetPad = padVar - gapVar;
   for (const [cell, cls] of want) {
     if (cls !== THREAD_TOP && cls !== THREAD_END) continue;
-    const av = cell.querySelector<HTMLElement>('[data-testid="Tweet-User-Avatar"]');
+    const av = avatarOf(cell);
     const art = topTweetOf(cell);
     if (!av || !art) continue;
     const top = cell.getBoundingClientRect().top;
@@ -457,10 +459,10 @@ export function clearCardWrappers(on: boolean): void {
     cardWrappers.clear();
     return;
   }
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
 
-  col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]').forEach((cell) => {
+  feedCells(col).forEach((cell) => {
     for (let el: HTMLElement | null = cell.parentElement; el; el = el.parentElement) {
       if (el === col) {
         wipeCardBg(el);
@@ -506,7 +508,7 @@ export function applyFlat(on: boolean): void {
     resetReflowBase();
     return;
   }
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
 
   const cw = col.getBoundingClientRect().width || 0;
@@ -515,7 +517,7 @@ export function applyFlat(on: boolean): void {
   // 0.5) 相关推文流的分区条：只打属性，高度不变，不需要重排
   markMoreSection();
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
-  const arts = [...col.querySelectorAll<HTMLElement>('article')].filter((a) => !a.parentElement?.closest('article'));
+  const arts = feedTweets(col);
 
   // 1) 分割线：从 cell 一路清到主栏。cell 只认一次，之后走缓存
   arts.forEach((a) => {
@@ -573,9 +575,9 @@ export function resetReflowBase(): void {
  * 说明这一页不是纯绝对定位列表，本轮一律不动（结构未稳定，硬算必错）。
  */
 export function reflowCards(): void {
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
-  const cells = Array.from(col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]'));
+  const cells = feedCells(col);
   if (cells.length < 2) return;
 
   // ⛔ 读写分离：先把所有高度读完再统一写，不要在「写样式 → 读高度」之间来回切。

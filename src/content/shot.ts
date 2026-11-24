@@ -16,6 +16,8 @@
  * 尺寸/圆角与 X 自己的图标按钮一致，所以卡片模式的 padding 怎么变都不用跟着调坐标。
  */
 
+import { column, tweets } from './sel';
+
 const SIZE = 34;
 
 /* 线性描边，和 X 操作栏里其它图标（评论/转推/点赞/书签/分享）同一风格；
@@ -160,7 +162,7 @@ function tip(text: string, ms = 2200): void {
  */
 function groupOf(art: HTMLElement): HTMLElement | null {
   for (const g of art.querySelectorAll<HTMLElement>('[role="group"]')) {
-    if (g.closest('article[data-testid="tweet"]') === art) return g;
+    if (g.closest('article') === art) return g;
   }
   return null;
 }
@@ -177,7 +179,7 @@ function slotOf(group: HTMLElement): { parent: HTMLElement; before: Node | null 
 }
 
 function mount(): void {
-  const arts = document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]');
+  const arts = tweets();
   let n = 0;
   for (const art of arts) {
     if (!art.isConnected) continue;
@@ -208,7 +210,7 @@ function onDocClick(ev: MouseEvent): void {
   if (!btn) return;
   ev.preventDefault();
   ev.stopPropagation();
-  const art = btn.closest<HTMLElement>('article[data-testid="tweet"]');
+  const art = btn.closest<HTMLElement>('article');
   if (art) void shoot(art);
 }
 
@@ -333,7 +335,7 @@ function scrollRoot(art: HTMLElement): HTMLElement | null {
  * 只认「宽度覆盖主栏 70% 以上、贴在顶部、高度不超过 260」的层，避免误伤整页遮罩。
  */
 function hideTopOverlays(): () => void {
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return () => {};
   const r = col.getBoundingClientRect();
   const found = new Set<HTMLElement>();

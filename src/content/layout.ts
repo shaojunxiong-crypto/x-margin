@@ -4,6 +4,7 @@
  */
 
 import type { Layout } from '../shared/settings';
+import { cells as feedCells, column, hasTweet, isNewLayout } from './sel';
 
 /** 浮动按钮白名单与 styles.ts 里那几条 CSS 规则保持同一份 */
 const FLOAT_SEL_CHAT = '[data-testid="DMDrawer" i],[data-testid="DMDrawerButton" i],'
@@ -56,9 +57,63 @@ export function applyLayout(l: Layout): void {
   html.classList.toggle('xm-wide', wide);
   if (!wide) {
     document.querySelectorAll('.xm-wide-el').forEach((el) => el.classList.remove('xm-wide-el'));
+    syncWidthVar(null);
+    return;
+  }
+  // 新版：宽度是 CSS 变量驱动的，直接覆写变量即可，不用逐层打 class
+  if (isNewLayout()) {
+    syncWidthVar(l.feedWidth);
     return;
   }
   widenInner();
+}
+
+/**
+ * 新版主栏宽度。X 用 `--x-main-column-width` 喂 grid 轨道（实测 vw 1407、主栏 600）。
+ * ⛔ 变量必须写回**定义它的那一层**（最外层 `div.mx-auto.flex`，class 里带 `[--x-main-column-width:600px]`）：
+ *    写在 `main` 自己身上、或写在 `<html>` 上都不生效 —— 前者被 grid 轨道定死，
+ *    后者被 shell 自己的声明盖掉。实测只有 shell 层写进去才 600→840。
+ */
+let widthHost: HTMLElement | null = null;
+let widthHostPrev = '';
+
+/** 同值不写：心跳每 4s 会再调一次，而每写一次自定义属性都会标脏一次样式 */
+function setVar(el: HTMLElement, k: string, v: string): void {
+  if (el.style.getPropertyValue(k) !== v) el.style.setProperty(k, v);
+}
+
+/**
+ * 返回是否命中了新版结构（找到了声明变量的那层外壳）。
+ * 调用方拿它当路由：命中 ⇒ 变量路线；未命中 ⇒ 旧版，退回去打 class。
+ */
+export function syncWidthVar(w: number | null): boolean {
+  const main = document.querySelector<HTMLElement>('main');
+  // 最外层优先：只有它同时管住 grid 轨道与内层 max-width
+  let host: HTMLElement | null = null;
+  for (let el = main?.parentElement ?? null; el && el !== document.documentElement; el = el.parentElement) {
+    if ((el.getAttribute('class') || '').includes('--x-main-column-width')) host = el;
+  }
+  if (widthHost && widthHost !== host) {
+    widthHost.style.setProperty('--x-main-column-width', widthHostPrev);
+    widthHost = null;
+  }
+  if (!host) return false;
+  if (widthHost !== host) {
+    widthHost = host;
+    widthHostPrev = host.style.getPropertyValue('--x-main-column-width');
+  }
+  if (w === null) {
+    // 恢复原值（可能是空串，那就整条删掉）
+    if (widthHostPrev) setVar(host, '--x-main-column-width', widthHostPrev);
+    else host.style.removeProperty('--x-main-column-width');
+    return true;
+  }
+  setVar(host, '--x-main-column-width', `${w}px`);
+  // 时间线自己还有一层 max-w-[var(--x-timeline-max-width,600px)]，不同步就只加宽外壳、内容仍 600
+  const list = main?.querySelector('ul');
+  const wrap = list?.parentElement;
+  if (wrap instanceof HTMLElement) setVar(wrap, '--x-timeline-max-width', `${w}px`);
+  return true;
 }
 
 /**
@@ -66,12 +121,12 @@ export function applyLayout(l: Layout): void {
  * 只沿 cell 的祖先链上溯（限宽层必定是祖先），成本 O(链长)，可以跟着 DOM 变更即时跑。
  */
 export function widenInner(): void {
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
 
   // 种子取前两个 cell（防第一条挂在别的子树里）；骨架期退化成主栏的第一条子链
   const seeds: HTMLElement[] = [];
-  const cells = col.querySelectorAll<HTMLElement>('[data-testid="cellInnerDiv"]');
+  const cells = feedCells(col);
   for (let i = 0; i < Math.min(2, cells.length); i++) seeds.push(cells[i]);
   if (!seeds.length) {
     let el = col.firstElementChild as HTMLElement | null;
@@ -134,21 +189,48 @@ export function markComposer(hide: boolean): void {
   }
 
   const isDetail = location.pathname.includes('/status/');
+  const path = location.pathname;
+  const routeChanged = path !== lastCompPath;
+  lastCompPath = path;
   const now = performance.now();
+  const alive = !!compTarget && compTarget.isConnected;
+
+  // 稳态早退：同一路由、上一轮已判 ok、目标节点还活着 ⇒ 结论不可能变，本轮连几何都不读。
+  // ⛔ 这不是「有标记就跳过」的旧写法：节点被 X 换掉（alive 为假）或路由变了都会重算，
+  //    详情页主帖晚出现那一类问题仍然走下面的完整判定。
+  // 仍要补一次 class：applyFlat 等别处会摘标记，只补不摘，不算写入抖动。
+  if (!routeChanged && html.dataset.xmComp === 'ok' && alive) {
+    if (!compTarget!.classList.contains(COMP_HIDE_CLS)) compTarget!.classList.add(COMP_HIDE_CLS);
+    return;
+  }
+
   // 还没藏过任何一层 ⇒ 本轮必算：让面板白站 400ms 就是「隐藏太晚」（v0.1.93 修）
-  const fresh = !compTarget || !compTarget.isConnected;
+  const fresh = !alive;
   if (!(fresh && !isDetail) && now - lastCompScan < 400) return;
   lastCompScan = now;
 
-  const col = document.querySelector('[data-testid="primaryColumn"]');
-  const btn = col?.querySelector<Element>('[data-testid="tweetButtonInline"]');
-  if (!col || !btn) {
-    html.dataset.xmComp = 'miss';
+  /**
+   * 判失败时**不立刻降级**。
+   * 失败的最常见原因恰恰是我们自己把面板 display:none 了 —— 那层里的候选按钮量出来是
+   * 0×0，重解析必然 miss。一判就摘 class，面板露出来；下一轮又量得到尺寸、判 ok、藏回去：
+   * 实测 dataset.xmComp 每 ~700ms 在 miss⇄ok 之间翻，文档高度来回跳 109px（发帖面板高度）。
+   * 所以 ok 状态下要连续两轮失败才认。真失效（X 把节点换掉）时 alive 为假，直接降级。
+   */
+  const degrade = (reason: 'miss' | 'col' | 'guard'): void => {
+    if (html.dataset.xmComp === 'ok' && alive && ++compMiss < 2) return;
+    compMiss = 0;
+    html.dataset.xmComp = reason;
     setCompTarget(null);
+  };
+
+  const col = column();
+  const btn = col ? composeButton(col) : null;
+  if (!col || !btn) {
+    degrade('miss');
     return;
   }
   let area: Element | null = null;
-  for (const sel of ['[data-testid="tweetTextarea_0"]', '[data-testid="tweetTextarea_0RichTextInputContainer"]']) {
+  for (const sel of ['[data-testid="tweetTextarea_0"]', '[data-testid="tweetTextarea_0RichTextInputContainer"]', '[contenteditable="true"]', '[role="textbox"]']) {
     const el = col?.querySelector(sel);
     if (el) { area = el; break; }
   }
@@ -157,8 +239,7 @@ export function markComposer(hide: boolean): void {
   let best: Element | null = area;
   while (best && best !== col && !best.contains(btn)) best = best.parentElement;
   if (!best || best === col) {
-    html.dataset.xmComp = 'miss';
-    setCompTarget(null);
+    degrade('miss');
     return;
   }
 
@@ -171,7 +252,7 @@ export function markComposer(hide: boolean): void {
     if (!p || p === col) break;
     if (!p.contains(btn)) break;
     if (hasTweetContent(p)) break;
-    const foreignCell = [...p.querySelectorAll('[data-testid="cellInnerDiv"]')].some((c) => !best!.contains(c));
+    const foreignCell = feedCells(p).some((c) => !best!.contains(c));
     if (foreignCell) break;
     const foreignTab = [...p.querySelectorAll('[role="tablist"]')].some((t) => !best!.contains(t));
     if (foreignTab) break;
@@ -180,22 +261,20 @@ export function markComposer(hide: boolean): void {
     best = p;
   }
   if (best === col) {
-    html.dataset.xmComp = 'col';
-    setCompTarget(null);
+    degrade('col');
     return;
   }
   // 宁可什么都不藏，也不能藏到推文
   if (hasTweetContent(best) || best.getBoundingClientRect().height > cap) {
-    html.dataset.xmComp = 'guard';
-    setCompTarget(null);
+    degrade('guard');
     return;
   }
   // 详情页的 LCA 若把推文 cell 整个包进来（主帖与回复框同 cell 的极端结构），仍然停手
-  if (isDetail && best.querySelector('[data-testid="cellInnerDiv"]')) {
-    html.dataset.xmComp = 'guard';
-    setCompTarget(null);
+  if (isDetail && feedCells(best).length > 0) {
+    degrade('guard');
     return;
   }
+  compMiss = 0;
   html.dataset.xmComp = 'ok';
   setCompTarget(best);
 }
@@ -220,12 +299,48 @@ function setCompTarget(el: Element | null): void {
 const COMP_HIDE_CLS = 'xm-comp-hide';
 
 let lastCompScan = -1e9;
+/** 上一轮判定的路由：SPA 切页后结论必须重算，同路由内的结论可以直接复用 */
+let lastCompPath = '';
+/** ok 状态下连续判失败的轮数，攒到 2 才真降级（见 markComposer 里的 degrade） */
+let compMiss = 0;
 
 /** 这一层里已经有推文的实质内容 ⇒ 是推文的地盘，不是发帖面板 */
 function hasTweetContent(el: Element): boolean {
-  return !!(
-    el.querySelector('article[data-testid="tweet"]')
-    || el.querySelector('[data-testid="tweetText"]')
-    || el.querySelector('[data-testid="Tweet-User-Avatar"]')
-  );
+  return hasTweet(el);
+}
+
+/**
+ * 发帖按钮。
+ * 旧版是 `[data-testid="tweetButtonInline"]`；新版没有 testid，只能按语义认：
+ * 「只有文案、没有数字」的按钮 —— 互动按钮（回复/转帖/点赞/书签）都带计数，
+ * 且都被包在 `[role="group"]` 里，先排除掉就不会误认。
+ */
+const COMPOSE_RE = /^(发帖|发布|回复|post|post all|tweet|reply)$/i;
+/** 上次认出的发帖按钮。X 不会把它旁边的东西换掉，节点还在就一直用 */
+let compBtn: Element | null = null;
+
+function composeButton(col: Element): Element | null {
+  // 缓存优先、不碰几何：面板一旦被我们藏起来，里面的候选按钮 rect 就是 0×0，
+  // 每轮重新按尺寸筛都会筛空 → 判 miss → 摘 class → 面板露出 → 下轮又筛中。
+  // 这条循环正是「推文流持续抖动」的第二个来源（v0.2.1 修）。
+  if (compBtn && compBtn.isConnected && col.contains(compBtn)) return compBtn;
+  compBtn = resolveComposeButton(col);
+  return compBtn;
+}
+
+function resolveComposeButton(col: Element): Element | null {
+  const old = col.querySelector('[data-testid="tweetButtonInline"]');
+  if (old) return old;
+  for (const b of col.querySelectorAll<HTMLElement>('button, [role="button"]')) {
+    if (b.closest('[role="group"]')) continue;
+    const label = (b.getAttribute('aria-label') || b.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!label || label.length > 12 || !COMPOSE_RE.test(label)) continue;
+    // 落在自己藏起来的那层里 ⇒ 量不出尺寸是必然的，此时只靠语义认，不做几何校验
+    if (!b.closest('.' + COMP_HIDE_CLS)) {
+      const r = b.getBoundingClientRect();
+      if (r.width < 16 || r.height < 16) continue;
+    }
+    return b;
+  }
+  return null;
 }

@@ -17,10 +17,15 @@
  */
 
 /** 只在这些路由下动手，切走自动还原。历史页两种写法都要认 */
+import { column } from './sel';
+
+/** 主栏里的「一格」。新旧两版各认一个 —— 页头判定的所有排除条件都压在它上面 */
+const CELL_SEL = '[data-testid="cellInnerDiv"], li[data-index]';
+
 const ROUTES: RegExp[] = [/(^|\/)notifications(\/|$)/, /(^|\/)history(\/|$)/, /(^|\/)i\/history(\/|$)/];
 
 /** 内容起点：标签栏，或列表里第一条 cell */
-const CONTENT_SEL = '[role="tablist"], [data-testid="cellInnerDiv"]';
+const CONTENT_SEL = `[role="tablist"], ${CELL_SEL}`;
 /** 顶栏约 53px；上限 140 挡住「整个主栏」这种误判 */
 const BLOCK_LIMIT = 140;
 
@@ -69,7 +74,7 @@ function chromeBefore(col: HTMLElement): HTMLElement[] {
       if (s.hasAttribute(HEAD_ATTR)) { rows.push(s); continue; }
       if (s.clientHeight === 0) continue; // 空占位
       if (s.clientHeight > BLOCK_LIMIT) continue; // 整段列表或整栏
-      if (s.querySelector('[data-testid="cellInnerDiv"]')) continue;
+      if (s.querySelector(CELL_SEL)) continue;
       if (s.querySelector('[role="tablist"]')) continue;
       if (s.matches('[data-testid^="ScrollSnap-"]')) continue; // 标签栏两侧的箭头
       // 浮层按钮（上一页 / 下一页 / 关闭）都是窄条绝对定位；页头即使绝对定位也是满宽，
@@ -91,17 +96,17 @@ function chromeBefore(col: HTMLElement): HTMLElement[] {
 function chromeByAnchor(col: HTMLElement): HTMLElement[] {
   let anchor: HTMLElement | null = null;
   for (const el of col.querySelectorAll<HTMLElement>('h2[role="heading"], h2')) {
-    if (!el.closest('[data-testid="cellInnerDiv"]')) { anchor = el; break; }
+    if (!el.closest(CELL_SEL)) { anchor = el; break; }
   }
   if (!anchor) {
     const gear = col.querySelector<HTMLElement>(GEAR_SEL);
-    if (gear && !gear.closest('[data-testid="cellInnerDiv"]')) anchor = gear;
+    if (gear && !gear.closest(CELL_SEL)) anchor = gear;
   }
   if (!anchor) anchor = col.querySelector<HTMLElement>(BACK_SEL);
   if (!anchor) return [];
   let row: HTMLElement | null = null;
   for (let el: HTMLElement | null = anchor.parentElement; el && el !== col; el = el.parentElement) {
-    if (el.querySelector('[data-testid="cellInnerDiv"]')) break;
+    if (el.querySelector(CELL_SEL)) break;
     if (el.querySelector('[role="tablist"]')) break;
     if (el.clientHeight > BLOCK_LIMIT) break;
     row = el;
@@ -120,7 +125,7 @@ export function markPageHead(): void {
   const now = performance.now();
   if (now - lastRun < 250) return;
   lastRun = now;
-  const col = document.querySelector<HTMLElement>('[data-testid="primaryColumn"]');
+  const col = column();
   if (!col) return;
   let rows = chromeBefore(col);
   if (!rows.length) rows = chromeByAnchor(col);

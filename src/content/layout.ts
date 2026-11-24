@@ -9,9 +9,11 @@ import { cells as feedCells, column, hasTweet, isNewLayout } from './sel';
 /** 浮动按钮白名单与 styles.ts 里那几条 CSS 规则保持同一份 */
 const FLOAT_SEL_CHAT = '[data-testid="DMDrawer" i],[data-testid="DMDrawerButton" i],'
   + '[data-testid="chat-drawer-root" i],[data-testid="chat-drawer-main" i]';
-const FLOAT_SEL_GROK = '[data-testid="GrokDrawer" i],[data-testid="GrokDrawerButton" i]';
-/** 白名单失效时按可见名认：英文 Messages / Chat / Grok，中文私信 / 消息 / 聊天 */
-const FLOAT_LABEL = /^(messages|direct messages?|chat|grok|私信|消息|聊天)$/i;
+const FLOAT_SEL_GROK = '[data-testid="GrokDrawer" i],[data-testid="GrokDrawerButton" i],'
+  + '[data-slot="xds-dock-launcher"]';
+/** 白名单失效时按可见名认：英文 Messages / Chat / Grok，中文私信 / 消息 / 聊天。
+ *  ⛔ 不能加首尾锚点：新版按钮叫「展开 Grok」，精确匹配 grok 永远不中。 */
+const FLOAT_LABEL = /(messages|direct messages?|chat|grok|私信|消息|聊天)/i;
 /** 兜底扫描的上次时间。初值必须是过去 —— 用 0 会把加载后的前 5 秒全挡掉。 */
 let lastFloatScan = -1e9;
 

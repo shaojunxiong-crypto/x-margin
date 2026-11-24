@@ -37,19 +37,39 @@ function restore(): void {
   touched.clear();
 }
 
+/**
+ * 面板底色随玻璃档位走：面板盖在页面内容上，比主栏实一点才能保证文字可读，
+ * 但又必须跟着档位一起变 —— 固定 0.9 / 0.93 在浅色主题下就是「白底上的白板」，
+ * 半透明完全看不出来（用户 2026-11-24 报的就是这个）。
+ * 取 ALPHA + 约 0.14，四舍五入到两档：比主栏实一档，薄玻璃时仍明显透。
+ */
+const PANEL_A: Record<Glass, [dark: number, light: number]> = {
+  thick: [0.88, 0.9],
+  mid: [0.78, 0.82],
+  thin: [0.68, 0.74],
+};
+
+/**
+ * 推文卡片（xm-card 模式）的底色：比主栏实、比设置面板略透一点。
+ * 卡片面积大、底下压着壁纸，太实就是一排白板；太透正文会跟壁纸打架。
+ */
+const CARD_A: Record<Glass, [dark: number, light: number]> = {
+  thick: [0.86, 0.88],
+  mid: [0.74, 0.78],
+  thin: [0.62, 0.68],
+};
+
 /** 面板与卡片的配色变量，深浅各一套 */
 const UI: Record<Theme, Record<string, string>> = {
   dark: {
     '--xm-ui-fg': '#e7e9ea',
     '--xm-ui-sub': '#8b98a5',
     '--xm-ui-dim': '#6b7480',
-    '--xm-ui-bg': 'rgba(17,17,19,.9)',
     '--xm-ui-card': 'rgba(255,255,255,.04)',
     '--xm-ui-line': 'rgba(255,255,255,.11)',
     '--xm-ui-hover': 'rgba(255,255,255,.07)',
     '--xm-ui-seg': 'rgba(255,255,255,.06)',
     '--xm-ui-on': 'rgba(255,255,255,.15)',
-    '--xm-card-bg': 'rgba(18,20,24,.88)',
     '--xm-card-x': '0px',
     '--xm-card-gap': '15px',
     '--xm-card-pad': '19px',
@@ -58,27 +78,34 @@ const UI: Record<Theme, Record<string, string>> = {
     '--xm-ui-fg': '#0f1419',
     '--xm-ui-sub': '#536471',
     '--xm-ui-dim': '#75858f',
-    '--xm-ui-bg': 'rgba(252,252,253,.93)',
     '--xm-ui-card': 'rgba(0,0,0,.028)',
     '--xm-ui-line': 'rgba(0,0,0,.1)',
     '--xm-ui-hover': 'rgba(0,0,0,.045)',
     '--xm-ui-seg': 'rgba(0,0,0,.045)',
     '--xm-ui-on': '#ffffff',
-    '--xm-card-bg': 'rgba(255,255,255,.90)',
     '--xm-card-x': '0px',
     '--xm-card-gap': '15px',
     '--xm-card-pad': '19px',
   },
 };
 
-function paintUI(theme: Theme, withBg = true): void {
+function paintUI(theme: Theme, withBg = true, glass: Glass = 'mid'): void {
   const html = document.documentElement;
   for (const [k, v] of Object.entries(UI[theme])) html.style.setProperty(k, v);
-  // 有壁纸时卡片是实体块；没壁纸时页面是纯色，实体块会与底色同色，只留一点明度差
+  // 面板底色跟玻璃档位联动（见 PANEL_A）
+  const [pd, pl] = PANEL_A[glass];
+  html.style.setProperty(
+    '--xm-ui-bg',
+    theme === 'dark' ? `rgba(17,17,19,${pd})` : `rgba(252,252,253,${pl})`,
+  );
+  // 有壁纸时卡片是玻璃块：底色同样跟档位联动，比主栏略实一档，保证正文压得住壁纸。
+  // 固定 .88/.90 时薄玻璃档只有主栏变透、卡片仍是白板，肉眼就是「半透明没了」。
+  // 没壁纸时页面是纯色，实体块会与底色同色，只留一点明度差。
+  const [cd, cl] = CARD_A[glass];
   html.style.setProperty(
     '--xm-card-bg',
     withBg
-      ? theme === 'dark' ? 'rgba(18,20,24,.88)' : 'rgba(255,255,255,.90)'
+      ? theme === 'dark' ? `rgba(18,20,24,${cd})` : `rgba(255,255,255,${cl})`
       : theme === 'dark' ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.03)',
   );
   html.classList.toggle('xm-dark', theme === 'dark');
@@ -164,7 +191,7 @@ export function applySkin(theme: Theme, on: boolean, glass: Glass = 'mid', softT
   html.dataset.glass = glass;
   html.style.setProperty('--xm-scrim', theme === 'dark' ? 'rgba(0,0,0,.18)' : 'rgba(255,255,255,.22)');
   // 面板配色与背景开关无关；卡片底色要看有没有壁纸
-  paintUI(theme, on);
+  paintUI(theme, on, glass);
   restore();
   if (!on) return;
 

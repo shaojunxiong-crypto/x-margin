@@ -385,6 +385,11 @@ html.xm-nofloat [data-testid="chat-drawer-root" i],
 html.xm-nofloat [data-testid="chat-drawer-main" i],
 html.xm-nofloat [data-testid="GrokDrawer" i],
 html.xm-nofloat [data-testid="GrokDrawerButton" i]{display:none!important}
+/* 新版（2026-11）把右下角收成一个 dock：[data-slot="xds-dock-launcher"] + 同名 panel，
+   外面裹一层 bg-modal 的 55px 圆角块。旧白名单一条都不命中（实测 testid 全为空），
+   按钮 aria-label 也从 "Grok" 变成 "展开 Grok"。整个 dock 一起收，否则外壳留个白块。 */
+html.xm-nofloat [data-slot="xds-dock-launcher"],
+html.xm-nofloat div:has(> [data-slot="xds-dock-launcher"]){display:none!important}
 html.xm-nofloat .xm-float-hide{display:none!important}
 `;
 
@@ -611,6 +616,12 @@ html.xm-rail div[class~="sm:block"]:has(> div[class*="--x-sidebar-expanded"]){
 }
 html.xm-rail body > div[class*="mx-auto"]:has(main){
   margin-left:0!important;margin-right:auto!important;
+  /* ⛔ 必须解掉 X 自带的 max-w-[1024px]。该外壳同时带 overflow-x-clip：
+     1024 − padding-left(216.7) 只剩 807 的内容盒，840 的主栏右侧 33px 被直接裁掉
+     —— 表现就是推文正文顶到白色卡片右边缘断句、⋯ 菜单整颗消失（2026-11-24 实测：
+     vw 1273 时主栏 217–1057，正文右端 1041，超出外壳 17px 被切）。
+     放开上限后外壳撑满视口，主栏仍由下条的 padding-left 居中（中心 637 = vw/2）。 */
+  max-width:none!important;
   /* 96px 保底：窄窗口下 (vw − 主栏) / 2 会小于栏宽，主栏就贴着栏了 */
   padding-left:max(96px,calc((100vw - var(--xm-feed-w,600px)) / 2))!important;
 }
@@ -634,6 +645,15 @@ html.xm-rail nav[aria-label="主要"] [role="button"].xm-hide{
    外层那圈 padding 壳一并收掉，否则隐掉按钮还留 24px 空档。 */
 html.xm-hidecompose a[href="/compose/post"],
 html.xm-hidecompose div:has(> a[href="/compose/post"]){display:none!important}
+/* ── 强调色：让 X 页面自己跟着设置走 ──
+   新版把 Tailwind 的 brand 色**编译进 class 的值**（实测覆盖 --color-brand 无效，改完仍是原色），
+   所以只能按类名盖。用 class~= 属性选择器，省掉 CSS 里冒号的转义。
+   ⛔ 只盖 brand：like 红、repost 绿、premium 金都是语义色，跟强调色无关，不能一起铲。
+   ⛔ 不加 main 限定：发帖弹层、导航栏在 main 之外，同样该变。 */
+html [class~="text-brand"]{color:var(--xm-acc)!important}
+html [class~="hover:text-brand"]:hover{color:var(--xm-acc)!important}
+html [class~="bg-brand"]{background-color:var(--xm-acc)!important}
+html [class~="border-brand"]{border-color:var(--xm-acc)!important}
 `;
 
 const CSS = BASE_CSS + SOFT_CSS + QUOTE_CSS + CELL_CARD_CSS + FONT_CSS + LAYOUT_CSS + RAIL_CSS + NEW_CSS;

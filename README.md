@@ -303,6 +303,29 @@ html.xm-card main li[data-index][data-xm-spam-note]{ display:none!important }
 
 实测：该 cell `display:none`、`offsetHeight 0`，页面底部最后一条卡片结束后直接接壁纸，无残留空卡；首页时间线 `15 格 / spam 标记 0 / 隐藏 0`，无误伤。
 
+### 0.2.12 附：悬浮层还是圆角（资料卡、下拉菜单）
+
+用户报「资料卡没变成方形」。根因是**锚点整批失效**，不是样式被覆盖：
+
+| 环节 | 事实 |
+|---|---|
+| 旧锚点 | `html.xm-flat [role="dialog"]`，写在 `QUOTE_CSS` 里 |
+| 新版结构 | 这些浮层挂在 `body` 下的 portal，**`role` 实测 `null`、`data-testid` 实测 `null`** ⇒ 旧规则一条都命中不了 |
+| 现成锚点 | 它们统一用同一个浮层基类，外壳 class 里带 `origin-[var(--transform-origin)]` |
+| 圆角来自哪 | Tailwind 的 `rounded-md`，实测 **28.8px**（= 1.8rem，vw 1273 / DSR 2） |
+
+改成压这层外壳：
+
+```css
+html.xm-flat [class*="origin-[var(--transform-origin)]"]{ border-radius:0!important }
+```
+
+⛔ 三条别踩：
+
+1. **只压外壳，不碰卡内**：卡里的头像是 `9999px` 全圆、小链接底是 `7.2px`，两者都不该动 —— 和旧版「只压外壳两档」是同一条策略。
+2. **别写成 `[class*="rounded-"]`**：那会把卡内元素一起铲平，头像变方块。
+3. **别换成 `[class*="rounded-md"][class*="shadow-lg"]`**：这两个类页面里另有使用者；实测同一时刻只有浮层基类能精确命中 1 个（就是那张卡）。属性值里的方括号、圆括号在引号内是字面量，不会截断选择器，已用 `querySelectorAll` 验过。
+
 ### 0.2.13：发帖页的标题栏和内容糊在一起
 
 用户报「标题应该有清晰的边和内容隔开，就像主页的标题栏一样」。

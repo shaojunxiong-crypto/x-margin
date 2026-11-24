@@ -349,6 +349,24 @@ html.xm-flat [class*="origin-[var(--transform-origin)]"]{ border-radius:0!import
 
 验证：该页头 `border-bottom: 0.667px rgba(0,0,0,.22)`、`h 53→54`、`top 0`；滚动 800px 后仍 `top 0`（吸顶没被破坏）；首页命中数 **0**（主页页头是 `HEADER`，不吃这条规则）。
 
+### 0.2.14：详情页「发现更多」标题顶在卡片边上
+
+用户报「缺少 padding」。这颗标题（相关推文流的分区标）在 X 里自带 `py-3`，本该有 12px 上留白 —— 但卡片模式在格子顶部裁了 15px，把这 12px 连本带利吃掉，字就贴着卡片白边。
+
+为什么不能用现成的 `markMoreSection`：那颗标题**常和后面的相关推文同属一个 cell**（实测该 `li` 高 2337px、内含多个 `article`），而 `isMoreSection` 的第一条判据就是「格内有 article 一律放行」，于是 74px 小牌那套完全命中不了。
+
+新增一个只认标题自身的标记 `data-xm-more-head`（打在 `h2` 上，文本匹配 `MORE_SEC_RE`、长度 ≤20），样式表补回被裁的那 15px：
+
+```css
+html.xm-card main [data-xm-more-head]{ padding-top:var(--xm-card-gap,15px)!important }
+```
+
+⛔ 垫在 `h2` 上，不碰外层 `div.px-4.py-3` —— 那层是 Tailwind 类名，换版本就变；`h2` 是它唯一的内容，等效且能跟着文本复用一起被摘。
+
+⛔ 必须并进 `markMoreSection` 的 `touched` 一起补 `reflowCards()`：格高增 15px，后面每条的 `translateY` 都得重算；关掉卡片模式时该属性与 `data-xm-more-sec` 一起摘。
+
+实测（详情页）：`padding-top 15px`、`h2` 盒高 24→39、字顶距卡片上沿 **1px → 12px**、左侧 16px 不变（与推文头像同一列）；格高 2337 未错位。
+
 ### 背景怎么铺到 X 底下
 
 `.xm-bg` 是 `position: fixed; inset: 0; z-index: -1` 的一层，塞进 `body` 最前面。z-index 为负才会落在 `#react-root` 的所有内容之下；`html`/`body`/`#react-root` 的底色同时改成透明，否则整页底色会把画布糊死。

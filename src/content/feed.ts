@@ -171,6 +171,30 @@ function isMoreSection(cell: HTMLElement): boolean {
   return (cell.textContent || '').trim().length <= 40;
 }
 
+/**
+ * 「发现更多」那颗标题本身：它常和后面的相关推文**同属一个 cell**，
+ * `isMoreSection` 因为格内有 article 一律放行 ⇒ 上面那套 74px 小牌命中不了。
+ * 但它的 py-3(12px) 被卡片上沿的 15px 裁切吃掉，字就顶在卡片白边上（用户报「缺少 padding」）。
+ * 只给标题自身补回被裁掉的那 15px，观感回到原生。
+ * ⛔ 别改容器（div.px-4.py-3）：那层是 X 按 Tailwind 写的，换个版本类名就变；
+ *    垫在 h2 上等效（h2 就是这层唯一的内容），且随文本一起被复用、一起摘。
+ */
+const MORE_HEAD_ATTR = 'xmMoreHead';
+
+function markMoreHead(col: HTMLElement, card: boolean): number {
+  let touched = 0;
+  col.querySelectorAll<HTMLElement>('h2').forEach((h) => {
+    const marked = h.dataset[MORE_HEAD_ATTR] === '1';
+    const title = (h.textContent || '').trim();
+    const hit = card && title.length > 0 && title.length <= 20 && MORE_SEC_RE.test(title);
+    if (hit === marked) return;
+    if (hit) h.dataset[MORE_HEAD_ATTR] = '1';
+    else delete h.dataset[MORE_HEAD_ATTR];
+    touched++;
+  });
+  return touched;
+}
+
 /** 扫描限频：applyFlat 被悬停、心跳反复调用，每轮遍历全部 cell 没必要 */
 let lastMoreScan = -1e9;
 
@@ -237,6 +261,8 @@ export function markMoreSection(): void {
     touched++;
   });
   // 样式把这一格锁成 74px，与自然高度可能差几像素；高度一改，后面几条的 translateY 就错了
+  // 标题自身补的那 15px 也会改变格高，同一条口子一起重排
+  touched += markMoreHead(col, card);
   if (touched && card) {
     requestAnimationFrame(() => reflowCards());
   }
@@ -494,6 +520,8 @@ export function applyFlat(on: boolean): void {
     // 「发现更多」小节条是 dataset 属性，上面那个 class 循环管不到它 —— 原先
     // 关掉卡片模式后它仍锁着 74px、内容继续隐身，只有整页刷新才恢复。
     document.querySelectorAll<HTMLElement>('[data-xm-more-sec]').forEach((el) => el.removeAttribute('data-xm-more-sec'));
+    // 「发现更多」标题被卡片上沿裁掉的那 15px 同理
+    document.querySelectorAll<HTMLElement>('[data-xm-more-head]').forEach((el) => el.removeAttribute('data-xm-more-head'));
     // 「显示可能的垃圾信息」的隐藏标记同理，关掉卡片就还回来
     document.querySelectorAll<HTMLElement>('[data-xm-spam-note]').forEach((el) => el.removeAttribute('data-xm-spam-note'));
     for (const [el, prev] of flatLines) {

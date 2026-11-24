@@ -184,6 +184,10 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-joiner{
   padding-bottom:var(--xm-card-pad,19px)!important;
 }
+/* 「发现更多」这颗分区标题：X 自带 py-3(12px)，卡片上沿的 15px 裁切把它吃掉 ⇒ 字顶在
+   卡片白边上（用户报「缺少 padding」）。补回被裁的那 15px，观感回到原生。
+   ⛔ 只垫 h2 自身，不碰 div.px-4.py-3 —— 那层是 Tailwind 类名，换版本就变。 */
+html.xm-card [data-testid="primaryColumn"] [data-xm-more-head]{padding-top:var(--xm-card-gap,15px)!important}
 /* 不是组尾的按钮块两头都被裁，上侧也补一截 */
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-joiner:not(.xm-thread-end){
   padding-top:var(--xm-card-pad,19px)!important;
@@ -521,6 +525,8 @@ html.xm-card main li[data-index].xm-thread-end article{
   padding-top:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
   padding-bottom:var(--xm-card-pad,19px)!important;
 }
+/* 「发现更多」分区标题：同 OLD 一套，补回被卡片上沿裁掉的 15px */
+html.xm-card main [data-xm-more-head]{padding-top:var(--xm-card-gap,15px)!important}
 html.xm-card main li[data-index].xm-joiner{padding-bottom:var(--xm-card-pad,19px)!important}
 html.xm-card main li[data-index].xm-joiner:not(.xm-thread-end){
   padding-top:var(--xm-card-pad,19px)!important;

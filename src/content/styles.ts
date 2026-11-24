@@ -340,6 +340,15 @@ html.xm-skin[data-glass="thin"] [data-testid="primaryColumn"],
 html.xm-skin[data-glass="thin"] [data-testid="sidebarColumn"],
 html.xm-skin[data-glass="thin"] header[role="banner"]{backdrop-filter:blur(16px) saturate(1.35)}
 html.xm-skin header[role="banner"]{backdrop-filter:blur(14px) saturate(1.3)}
+/* 子页页头（发帖 / 回复 / 帖子详情…）：X 只给它 bg-primary/80 + 模糊，**没有下边线**。
+   这层下面是白底推文卡片，两者同色 ⇒ 读不出「这是一条标题栏」，用户报「标题没有清晰的边
+   和内容隔开，就像主页的标题栏一样」（0.2.13）。
+   ⛔ 只补一条 1px 细线，不碰背景、不碰高度：这层的 h-[53px] 是 X 算好的。
+   ⛔ 别用 box-shadow 画线：它不占盒，滚动时下一格的底色会把它盖掉。
+   ⛔ 别套用 --xm-ui-line（浅色下 rgba(0,0,0,.1)）：DPR 1.5 时 1px 被折成 0.67px，这个
+      alpha 实测在 252 的白底上完全看不出（洋红判别实验对比过）。 */
+html.xm-skin main div.sticky.top-0[class*="bg-primary/80"]{border-bottom:1px solid rgba(0,0,0,.22)!important}
+html.xm-dark.xm-skin main div.sticky.top-0[class*="bg-primary/80"]{border-bottom-color:rgba(255,255,255,.2)!important}
 `;
 
 /**

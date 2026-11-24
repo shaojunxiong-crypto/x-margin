@@ -303,6 +303,29 @@ html.xm-card main li[data-index][data-xm-spam-note]{ display:none!important }
 
 实测：该 cell `display:none`、`offsetHeight 0`，页面底部最后一条卡片结束后直接接壁纸，无残留空卡；首页时间线 `15 格 / spam 标记 0 / 隐藏 0`，无误伤。
 
+### 0.2.13：发帖页的标题栏和内容糊在一起
+
+用户报「标题应该有清晰的边和内容隔开，就像主页的标题栏一样」。
+
+真因不是我们弄丢了什么，是 **X 这层页头本身就没有下边线**：
+
+| 环节 | 事实 |
+|---|---|
+| 元素 | `div.bg-primary/80.sticky.top-0.backdrop-blur-md.z-20`，`h-[53px]`，宽 840 |
+| 背景 | `oklab(1 0 0 / 0.8)` —— 八成白 + 12px 模糊，没有 `border-bottom`（实测 `0px`） |
+| 为什么糊 | 它下面紧贴的是白底推文卡片，两者同色 ⇒ 看不出「这是一条栏」 |
+| 主页为什么清爽 | 主页页头是另一种组件（`main > header.sticky`），底部那条边实测 1 设备像素、约 `rgba(0,0,0,.15)` |
+
+修法是给这类子页页头补一条 1px 下边线（`rgba(0,0,0,.22)`；暗色 `rgba(255,255,255,.2)`），选择器 `main div.sticky.top-0[class*="bg-primary/80"]`。
+
+⛔ 实测三个坑：
+
+1. **别套 `--xm-ui-line`（浅色 `rgba(0,0,0,.1)`）**：DPR 1.5 时 1px 被折成 0.667px，这个 alpha 在 252 的白底上等于看不见 —— 用洋红判别实验对比过，1px 洋红能看见、1px `.1` 看不出。
+2. **别用 `box-shadow` 画这条线**：它不占盒，滚动时下一格的底色会盖掉。
+3. **别把 alpha 一次调太大**：`.3` 实测比主页那条边（`.15`）重一倍，`.22` 与主页观感一致。
+
+验证：该页头 `border-bottom: 0.667px rgba(0,0,0,.22)`、`h 53→54`、`top 0`；滚动 800px 后仍 `top 0`（吸顶没被破坏）；首页命中数 **0**（主页页头是 `HEADER`，不吃这条规则）。
+
 ### 背景怎么铺到 X 底下
 
 `.xm-bg` 是 `position: fixed; inset: 0; z-index: -1` 的一层，塞进 `body` 最前面。z-index 为负才会落在 `#react-root` 的所有内容之下；`html`/`body`/`#react-root` 的底色同时改成透明，否则整页底色会把画布糊死。

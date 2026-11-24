@@ -179,6 +179,22 @@ X 的外壳是 `mx-auto` 居中的（vw 1414 时外壳 1280、落在 x=67），�
 
 ⛔ 还留着一批同源死规则：`[data-testid="primaryColumn"]` / `cellInnerDiv` 在样式表里仍有二十多处（卡片模式的内边距、线程线、通知留白、加宽兜底）。它们**目前靠 JS 打的 class 与 `main li[data-index]` 那几条新规则兜住**，视觉上看不出问题，但都是空转；要清得整批迁移，别一条条改。
 
+### 0.2.6 / 0.2.7：把剩下那批空转规则清点一遍
+
+做法不是逐条改，而是先量：遍历样式表里所有含旧锚点（`primaryColumn` / `cellInnerDiv` / `tweetText` / `SideNav_*` …）的规则，在当前页面上逐条 `querySelectorAll` 计数，零命中的才算死规则。结果是**大部分不必动** —— 它们在新版确实零命中，但 `NEW_CSS` 里早有 `main` / `main li[data-index]` 的同义规则接手（卡片裁切、线程线、补线、提示行、分区条全是双份），按灰度回退的约定旧规则保留。
+
+真正「新版没有任何等价物」的只有三处，都补上了：
+
+| 症状 | 原因 | 补法 |
+|---|---|---|
+| 「隐藏发推入口」开着，栏里那个黑色发帖按钮照旧在 | 规则写成 `nav[aria-label="主要"] a[href="/compose/post"]`，而该按钮**在 nav 之外**（自有容器 `div.px-[12px].pb-[12px]`），匹配恒为 0；`rail.ts` 里 `applyNativeHide` 用 `scope.querySelectorAll` 找它，scope 也是 nav | CSS 去掉 `nav` 限定并连带收掉那圈 padding 壳；`rail.ts` 改为从 `document` 找，`!on` 分支同步摘除标记 |
+| 「文字柔化」在新版完全没反应 | 新版正文色不再是内联 `style`，而是 Tailwind 的 `.text-primary` class；`tweetText` / `User-Name` 两个 testid 都没了 | 加 `main article .text-primary`，仍限定 `main article` 内，不碰按钮与次级文字 |
+| 去右栏后主栏不撑满 | 规则挂在 `main[role="main"]` 上，新版 `main` 的 `role` 实测为 `null` | 各补一条裸 `main` 的同义规则 |
+
+玻璃皮肤同理（`data-glass` 设了但没有载体：`primaryColumn` / `sidebarColumn` 都已是 0 个），载体换成 `main` / `aside` —— 主栏背景本来就是透明的，模糊打在它身上等价。实测 `backdrop-filter` 会给 `main` 造 containing block，但格子是 `li` 内的 absolute、位置由 translateY 决定，量下来一格没动。
+
+**一个验证上的坑**：`requestAnimationFrame` 在后台标签页会被浏览器暂停，而图标栏的隐藏、`xm-rail-host` 背板、`--xm-rail-left` 全在心跳里。用 CDP 在后台标签页量，会看到「规则全失效、按钮一个没藏」的假象 —— 先 `Page.bringToFront` 再量。真机上切到该标签页时会触发 `visibilitychange` 补跑一帧，用户看不到这个空档。
+
 ### 背景怎么铺到 X 底下
 
 `.xm-bg` 是 `position: fixed; inset: 0; z-index: -1` 的一层，塞进 `body` 最前面。z-index 为负才会落在 `#react-root` 的所有内容之下；`html`/`body`/`#react-root` 的底色同时改成透明，否则整页底色会把画布糊死。

@@ -166,13 +166,17 @@ function applyNativeHide(on: boolean, hide: string[], hideCompose: boolean): voi
   if (!scope) return;
   if (!on) {
     scope.querySelectorAll('.xm-hide').forEach((el) => el.classList.remove('xm-hide'));
+    // 发帖入口不在 scope 里（见下方注释），必须单独摘掉，否则关掉图标栏后标记留在节点上
+    document.querySelectorAll<HTMLElement>('a[href="/compose/post"]').forEach((a) => a.classList.remove('xm-hide'));
     return;
   }
   railNodes().forEach((el, i) => el.classList.toggle('xm-hide', hide.includes(railKey(el, i))));
   if (hideCompose) {
     // 除了 html 类兜底，也直接给节点打标记：新版发帖入口是 a[href="/compose/post"]，
     // 不带头像也不带计数，靠 href 认最稳。
-    scope.querySelectorAll<HTMLElement>('a[href="/compose/post"]').forEach((a) => a.classList.add('xm-hide'));
+    // ⛔ 0.2.6：**不能从 nav 里找** —— 实测该按钮在 nav 之外（自有容器），
+    //    scope 限定在 nav 时 querySelectorAll 返回 0 个，设置开着也没人藏它。
+    document.querySelectorAll<HTMLElement>('a[href="/compose/post"]').forEach((a) => a.classList.add('xm-hide'));
   }
 }
 

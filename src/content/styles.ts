@@ -46,6 +46,11 @@ html.xm-dark.xm-soft [style*="rgb(247, 249, 249)"],
 html.xm-dark.xm-soft [style*="rgb(247,249,249)"],
 html.xm-dark.xm-soft [style*="rgb(231, 233, 234)"],
 html.xm-dark.xm-soft [style*="rgb(231,233,234)"]{color:var(--xm-soft-fg,#c8ced3)!important}
+/* 新版（Tailwind 重写版）的正文色不再写内联 style，而是 .text-primary 这个 class
+   （实测正文 div 的 class 是「max-w-full text-body font-bold text-primary ...」），
+   data-testid="tweetText" / "User-Name" 也都没了 —— 只留旧锚点的话柔化在新版完全不生效。
+   0.2.6 补 .text-primary 一条；仍限定在 main article 里，不碰按钮、页签、次级文字。 */
+html.xm-dark.xm-soft main article .text-primary,
 html.xm-dark.xm-soft [data-testid="tweetText"],
 html.xm-dark.xm-soft [data-testid="User-Name"]{color:var(--xm-soft-fg,#c8ced3)!important}
 `;
@@ -319,9 +324,18 @@ html.xm-font body *:not(svg):not(svg *):not(code):not(pre){
    内部 span 各自带着字号类，必须一并拉成 inherit —— 否则只有裸文本变大，链接、话题标签还是 15px。 */
 [data-testid="tweetText"]{font-size:16px!important;line-height:21px!important}
 [data-testid="tweetText"] *{font-size:inherit!important;line-height:inherit!important}
+/* 玻璃皮肤：旧版锚点是 primaryColumn / sidebarColumn，新版这两个 testid 都是 0 个，
+   data-glass 设了也一直没载体。新版主栏就是 main（背景透明，背后是我们自己的 --xm-bg 渐变），
+   模糊打在它身上效果等价。右栏在 xm-noside 下本来就被收掉，aside 仍写一条兜底。
+   ⛔ backdrop-filter 会给 main 造一个 containing block —— 实测格子是 li 内的 absolute，
+      位置由 translateY 决定，不受影响；若将来改成 fixed 定位必须重新量。 */
+html.xm-skin[data-glass="mid"] main,
+html.xm-skin[data-glass="mid"] aside,
 html.xm-skin[data-glass="mid"] [data-testid="primaryColumn"],
 html.xm-skin[data-glass="mid"] [data-testid="sidebarColumn"],
 html.xm-skin[data-glass="mid"] header[role="banner"]{backdrop-filter:blur(10px) saturate(1.3)}
+html.xm-skin[data-glass="thin"] main,
+html.xm-skin[data-glass="thin"] aside,
 html.xm-skin[data-glass="thin"] [data-testid="primaryColumn"],
 html.xm-skin[data-glass="thin"] [data-testid="sidebarColumn"],
 html.xm-skin[data-glass="thin"] header[role="banner"]{backdrop-filter:blur(16px) saturate(1.35)}
@@ -335,9 +349,12 @@ html.xm-skin header[role="banner"]{backdrop-filter:blur(14px) saturate(1.3)}
 const LAYOUT_CSS = `
 html.xm-noside [data-testid="sidebarColumn"],
 html.xm-noside aside{display:none!important}
-html.xm-noside main[role="main"]{flex-grow:1}
+/* 新版 main 没有 role 属性（实测 null），下面两条旧规则在新版不命中，各补一条同义的裸 main */
+html.xm-noside main[role="main"],
+html.xm-noside main{flex-grow:1}
 html.xm-noside [data-testid="primaryColumn"]{margin-left:auto!important;margin-right:auto!important}
-html.xm-wide main[role="main"]{max-width:none!important}
+html.xm-wide main[role="main"],
+html.xm-wide main{max-width:none!important}
 html.xm-wide [data-testid="primaryColumn"]{
   width:var(--xm-feed-w,720px)!important;
   max-width:var(--xm-feed-w,720px)!important;
@@ -467,7 +484,6 @@ html.xm-card main li[data-index] article{
   padding-bottom:var(--xm-card-pad,19px)!important;
 }
 html.xm-card main{background-color:transparent!important;background-image:none!important}
-html.xm-flat main{border-left:0!important;border-right:0!important}
 
 /* ── 回复链：组内不裁上下，只给首尾各一刀（与旧版同一套间距算法） ── */
 html.xm-card main li[data-index].xm-thread-top{
@@ -536,12 +552,11 @@ html.xm-card main li[data-index][data-xm-pill]{
   opacity:0!important;visibility:hidden!important;pointer-events:none!important;
 }
 
-/* ── 直角化：媒体与引用卡 ──
-   新版没有 tweetPhoto / card.* 锚点，只能按「图片来自 /media/」认（头像走 /profile_images/，不会误伤）。
-   ⛔ 别写成 article img 一刀切：那会把头像的 rounded-full 一起铲平。 */
-html.xm-flat main article :is(img[src*="/media/"],video){border-radius:0!important}
-html.xm-flat main article :has(> img[src*="/media/"]){border-radius:0!important;overflow:hidden}
-html.xm-flat main article :has(> video){border-radius:0!important}
+/* ── 直角化：媒体与引用卡见文件上方 QUOTE_CSS 的「媒体直角化」段 ──
+   0.2.0 这里曾有三条较弱的新版规则（只认直接子 img / video，漏掉外层 28.8px 的 a），
+   0.2.5 已由上面那组 :has(img[src*="pbs.twimg.com/media"]) / :has(article) 取代并删除。
+   旧版那组 tweetPhoto / card.* 规则仍保留（灰度回退用）。
+   ⛔ 模板字符串里不要写反引号（TS1127/TS1351），这条注释就踩过一次。 */
 
 /* ── 正文字号：新版的正文容器是 div[dir=auto].whitespace-pre-wrap，没有 testid ── */
 main article div[dir="auto"].whitespace-pre-wrap{font-size:16px!important;line-height:21px!important}
@@ -613,8 +628,12 @@ html.xm-rail nav[aria-label="主要"] [role="button"].xm-hide{
   display:none!important;
 }
 /* 发帖入口：新版是 a[href="/compose/post"]，不带头像也无计数，按 href 认最稳。
-   不依赖 xm-rail —— 展开态下也照样该藏（与旧版 SideNav_NewTweet_Button 同一条策略）。 */
-html.xm-hidecompose nav[aria-label="主要"] a[href="/compose/post"]{display:none!important}
+   不依赖 xm-rail —— 展开态下也照样该藏（与旧版 SideNav_NewTweet_Button 同一条策略）。
+   ⛔ 0.2.6：**不能限定在 nav 里**。实测该按钮在 nav 之外（自有容器 div.px-[12px].pb-[12px]），
+      写成 nav[aria-label="主要"] a[href=...] 匹配数为 0 —— 设置开着却一直不生效。
+   外层那圈 padding 壳一并收掉，否则隐掉按钮还留 24px 空档。 */
+html.xm-hidecompose a[href="/compose/post"],
+html.xm-hidecompose div:has(> a[href="/compose/post"]){display:none!important}
 `;
 
 const CSS = BASE_CSS + SOFT_CSS + QUOTE_CSS + CELL_CARD_CSS + FONT_CSS + LAYOUT_CSS + RAIL_CSS + NEW_CSS;

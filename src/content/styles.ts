@@ -556,12 +556,34 @@ html.xm-card main li[data-index][data-xm-pill]{
   overflow:hidden!important;clip-path:none!important;
   opacity:0!important;visibility:hidden!important;pointer-events:none!important;
 }
+/* 「显示可能的垃圾信息 / Show probable spam」：整格去掉（feed.ts 的 markSpamNote 按文本打属性）。
+   高度归零后由 reflowCards 把后面每一条顶上来，所以这里必须真的 display:none，
+   不能只藏内容 —— 留 48px 空白会变成一条横在流里的空卡。 */
+html.xm-card main li[data-index][data-xm-spam-note],
+html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"][data-xm-spam-note]{
+  display:none!important;
+}
 
 /* ── 直角化：媒体与引用卡见文件上方 QUOTE_CSS 的「媒体直角化」段 ──
    0.2.0 这里曾有三条较弱的新版规则（只认直接子 img / video，漏掉外层 28.8px 的 a），
    0.2.5 已由上面那组 :has(img[src*="pbs.twimg.com/media"]) / :has(article) 取代并删除。
    旧版那组 tweetPhoto / card.* 规则仍保留（灰度回退用）。
    ⛔ 模板字符串里不要写反引号（TS1127/TS1351），这条注释就踩过一次。 */
+
+/* ── 悬浮层直角：用户资料卡、下拉菜单、浮动提示 ──
+   新版把这些层统一成同一个浮层基类，外壳 class 里带 origin-[var(--transform-origin)]，
+   圆角来自 Tailwind 的 rounded-md —— 实测 28.8px（= 1.8rem，vw 1273、DSR 2）。
+   它们挂在 body 下的 portal 里，没有 role="dialog"、没有 data-testid
+   （2026-11-24 实测：role=null、testid=null），所以 QUOTE_CSS 里那条
+   html.xm-flat [role="dialog"] 一条都命中不了 —— 用户报的「资料卡没变成方形」就是它。
+   ⛔ 只压这一层外壳：卡内圆形头像（9999px）与小链接底（7.2px）都不动，与旧版
+      「只压外壳两档」同一条策略。写成 [class*="rounded-"] 会把卡内元素一起铲平。
+   ⛔ 别换成 [class*="rounded-md"][class*="shadow-lg"]：这两个类页面里另有使用者，
+      实测同一时刻只有浮层基类能精确命中 1 个（就是那张卡）。
+   ⛔ 属性值里的方括号、圆括号在引号内是字面量，不会截断选择器（已用 querySelectorAll 验过）。 */
+html.xm-flat [class*="origin-[var(--transform-origin)]"]{
+  border-radius:0!important;
+}
 
 /* ── 正文字号：新版的正文容器是 div[dir=auto].whitespace-pre-wrap，没有 testid ── */
 main article div[dir="auto"].whitespace-pre-wrap{font-size:16px!important;line-height:21px!important}

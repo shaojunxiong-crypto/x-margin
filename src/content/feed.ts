@@ -130,6 +130,25 @@ function isJoiner(cell: HTMLElement): boolean {
 }
 
 /**
+ * 详情页里的「显示回复」行：与主推文同属一个 cell（时间线里它是独立按钮块）。
+ * 它贴在 cell 最底部，卡片模式那 15px 裁切正好切在字上，只有半行可见。
+ * ⛔ 不能并进 isJoiner：那个判据同时决定回复链的分组边界，把含推文的 cell 认成
+ *    按钮块会让它被并进上一条，拆错组。这里只用来打 xm-joiner 类补内边距。
+ */
+function isTailJoiner(cell: HTMLElement): boolean {
+  const art = cell.querySelector('article');
+  if (!art) return false;
+  // 先过一遍整格文字，绝大多数推文在这一步就返回了
+  if (!JOINER_RE.test(cell.textContent || '')) return false;
+  // 取最后一个匹配的叶子节点：正文里提到「显示回复」不算，必须落在 article 之后
+  const leaf = [...cell.querySelectorAll('button,div,span')]
+    .filter((e) => e.childElementCount === 0 && JOINER_RE.test((e.textContent || '').trim()))
+    .pop();
+  if (!leaf || art.contains(leaf)) return false;
+  return (art.compareDocumentPosition(leaf) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+/**
  * 「发现更多 / 源自于整个 X」：推文详情页回复列表之后那颗相关推文流的分区标。
  * 它既不是推文也不匹配 JOINER_RE，卡片模式按 15px 裁切却不补内边距 ——
  * 原来那两行字被削掉字头字脚，按内层结构改单行在真机上更差（层级/内边距与模拟不一致）。
@@ -154,6 +173,44 @@ function isMoreSection(cell: HTMLElement): boolean {
 
 /** 扫描限频：applyFlat 被悬停、心跳反复调用，每轮遍历全部 cell 没必要 */
 let lastMoreScan = -1e9;
+
+/** 「显示可能的垃圾信息 / Show probable spam」：X 在回复末尾插的折叠提示，整格去掉 */
+const SPAM_NOTE_ATTR = 'xmSpamNote';
+const SPAM_NOTE_RE = /显示可能的垃圾信息|Show probable spam/i;
+
+function isSpamNote(cell: HTMLElement): boolean {
+  if (cell.querySelector('article')) return false;
+  return SPAM_NOTE_RE.test((cell.textContent || '').trim());
+}
+
+let lastSpamScan = -1e9;
+
+/**
+ * 抹掉「显示可能的垃圾信息」这一格。
+ * ⛔ 必须每轮重判、不成立就摘：X 的虚拟列表会复用 li 节点，属性一旦跟着被复用的节点
+ *    跑到一条正常推文上，那条推文就整格消失（比 markMoreSection 更狠，它至少还留个 `···`）。
+ * ⛔ 用 dataset 而不是 class：applyFlat 的关卡分支按 class 批量摘，会把这个标记一起清掉。
+ * ⛔ 高度归零后要补 reflowCards，否则后面每条的 translateY 都少算这 48px。
+ */
+export function markSpamNote(): void {
+  const col = column();
+  if (!col) return;
+  const now = performance.now();
+  if (now - lastSpamScan < 600) return;
+  lastSpamScan = now;
+  // 只在卡片模式生效：非卡片模式不做 reflowCards，藏掉的高度没人补，会留一条空洞
+  const card = document.documentElement.classList.contains('xm-card');
+  let touched = 0;
+  feedCells(col).forEach((cell) => {
+    const marked = cell.dataset[SPAM_NOTE_ATTR] === '1';
+    const hit = card && isSpamNote(cell);
+    if (hit === marked) return;
+    if (hit) cell.dataset[SPAM_NOTE_ATTR] = '1';
+    else delete cell.dataset[SPAM_NOTE_ATTR];
+    touched++;
+  });
+  if (touched) requestAnimationFrame(() => reflowCards());
+}
 
 /**
  * 标记「发现更多」小节条。
@@ -365,8 +422,12 @@ export function markThreads(): void {
       cell.style.removeProperty('--xm-ls');
     }
     // 按钮块没有 article，走不到 applyFlat 的分割线清理，这里单独抹
-    if (isJoiner(cell)) {
-      if (!cell.classList.contains(JOINER_CLS)) cell.classList.add(FLAT_CELL_CLS, JOINER_CLS);
+    if (isJoiner(cell) || isTailJoiner(cell)) {
+      if (!cell.classList.contains(JOINER_CLS)) {
+        cell.classList.add(FLAT_CELL_CLS, JOINER_CLS);
+        // 补了内边距，cell 高度变了：交给循环后的 reflowCards 统一重排
+        changed = true;
+      }
       wipeFlatLine(cell);
     }
   }
@@ -433,6 +494,8 @@ export function applyFlat(on: boolean): void {
     // 「发现更多」小节条是 dataset 属性，上面那个 class 循环管不到它 —— 原先
     // 关掉卡片模式后它仍锁着 74px、内容继续隐身，只有整页刷新才恢复。
     document.querySelectorAll<HTMLElement>('[data-xm-more-sec]').forEach((el) => el.removeAttribute('data-xm-more-sec'));
+    // 「显示可能的垃圾信息」的隐藏标记同理，关掉卡片就还回来
+    document.querySelectorAll<HTMLElement>('[data-xm-spam-note]').forEach((el) => el.removeAttribute('data-xm-spam-note'));
     for (const [el, prev] of flatLines) {
       if (!el.isConnected) continue;
       if (prev) el.style.setProperty('border-bottom', prev);
@@ -449,6 +512,8 @@ export function applyFlat(on: boolean): void {
   const cw = col.getBoundingClientRect().width || 0;
   // 0) 相关推文流的分区条：只打属性，高度不变，不需要重排
   markMoreSection();
+  // 0.5) 「显示可能的垃圾信息」：整格隐藏，高度归零后才需要重排（函数内部已处理）
+  markSpamNote();
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
   const arts = feedTweets(col);
 

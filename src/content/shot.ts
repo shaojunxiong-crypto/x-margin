@@ -333,6 +333,13 @@ function scrollRoot(art: HTMLElement): HTMLElement | null {
 /**
  * 吸顶 / 固定层：用 elementsFromPoint 在主栏顶部取三个点，比遍历 DOM 便宜得多。
  * 只认「宽度覆盖主栏 70% 以上、贴在顶部、高度不超过 260」的层，避免误伤整页遮罩。
+ *
+ * ⛔ visibility 单独不够用：X 的标签页下划线（`span.absolute.bottom-0.h-[3px].bg-black`）
+ *    class 里写着 invisible，运行时却用**内联 visibility:visible** 顶回来；父层被
+ *    `visibility:hidden!important` 隐掉后，这条 3px 黑条仍会render，于是被拍在推文顶部
+ *    （2026-11-24 实测：截图滚到文章顶端，页头压住前 100px，黑条落在 y≈102、宽 168px）。
+ *    opacity 是整组生效的，子元素无法用内联值穿透 ⇒ 两个一起上，visibility 保布局直觉，
+ *    opacity 兜住所有「子元素自己声明可见」的情形。
  */
 function hideTopOverlays(): () => void {
   const col = column();
@@ -349,12 +356,23 @@ function hideTopOverlays(): () => void {
       found.add(el);
     }
   }
-  const prev = [...found].map((el) => el.style.getPropertyValue('visibility'));
-  found.forEach((el) => el.style.setProperty('visibility', 'hidden', 'important'));
+  const prev = [...found].map((el) => ({
+    vis: el.style.getPropertyValue('visibility'),
+    visImp: el.style.getPropertyPriority('visibility'),
+    op: el.style.getPropertyValue('opacity'),
+    opImp: el.style.getPropertyPriority('opacity'),
+  }));
+  found.forEach((el) => {
+    el.style.setProperty('visibility', 'hidden', 'important');
+    el.style.setProperty('opacity', '0', 'important');
+  });
   return () => {
     [...found].forEach((el, i) => {
-      if (prev[i]) el.style.setProperty('visibility', prev[i]);
+      const p = prev[i];
+      if (p.vis) el.style.setProperty('visibility', p.vis, p.visImp);
       else el.style.removeProperty('visibility');
+      if (p.op) el.style.setProperty('opacity', p.op, p.opImp);
+      else el.style.removeProperty('opacity');
     });
   };
 }

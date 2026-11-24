@@ -7,7 +7,7 @@
 | 动态背景 | 12 款原创着色器（WebGL，其中「流光」走 WebGPU）+ 本地图片 + 强度滑杆 + 固定 / 随机 / 关闭 |
 | 字体 | X 默认 / 无衬线 / 衬线 / 自定义本机字体，字号 100% / 110% / 120% |
 | 主题 | 白色 / 黑色 / 跟随系统（写 X 自己的 `night_mode`）+ 6 个强调色预设与取色器 |
-| 布局 | 去右栏、图标导航栏、隐藏发推入口、隐藏浮动按钮、隐藏滚动条、去广告、去边框、推文独立成块、主栏 600 / 720 / 840 |
+| 布局 | 去右栏、图标导航栏、隐藏发推入口、隐藏浮动按钮、隐藏滚动条、去边框、推文独立成块、主栏 600 / 720 / 840 |
 | 截图 | 每条推文操作栏里的相机按钮，整条截成 PNG（长推文自动分帧拼接），可下载或复制 |
 
 ## 安装
@@ -65,7 +65,6 @@ scripts/make-icons.mjs   图标生成（矢量渲染，不依赖位图放大）
 | 布局 | 隐藏滚动条 | 默认开；只隐藏窗口（根滚动容器）那条，滚轮 / 键盘 / 触控板照常；弹窗、私信、设置页内部的滚动条保留 —— 那里没有滚动条就完全看不出「还有内容」 |
 | 布局 | 隐藏浮动按钮 | 默认开；右下角 Grok 与私信气泡两个固定层一起收起（压在时间线右下角，挡内容） |
 | 布局 | 隐藏发推入口 | 默认开；时间线顶部的发推面板 + 左侧栏发帖按钮一起收掉（不发推的人用不上；关掉即全部还原） |
-| 推文流 | 隐藏推广 | 默认开；带 `placementTracking` 的推广单元整条收起，不留空白 |
 | 推文流 | 去掉边框线条 | 常开；主栏左右两条 1px 竖线、推文之间的横向分割线、引用卡片的 16px 圆角与 1px 描边、内嵌图片与**外链卡 / 视频封面**的 16px 圆角，全部去掉。引用卡片与卡片的底色保留 |
 | 推文流 | 推文独立成块 | 常开；主栏不再有整块底板，每条推文裁成一张**直角**独立面板（自身上下内边距 22px，再从中裁 12px → 相邻两条合计 24px 缝隙；左右 0 内缩，与主栏/发帖框同宽同边） |
 | 推文流 | 600 / 720 / 840 | 默认 720；只改主栏宽度，排版规则不动 |
@@ -103,7 +102,7 @@ scripts/make-icons.mjs   图标生成（矢量渲染，不依赖位图放大）
 - **加宽**不再逐层打 `.xm-wide-el`。新版主栏宽度由 `--x-main-column-width` 喂 grid 轨道，把变量写回**定义它的那一层**（最外层 `div.mx-auto.flex`，class 里带 `[--x-main-column-width:600px]`）即可 600 → 840。写在 `main` 或 `<html>` 上都不生效：前者被 grid 轨道定死，后者被 shell 自己的声明盖掉。
 - **图标栏**不再压 X 的 header。新版自带折叠，宽度是 `calc(72px + 184px * var(--x-sidebar-expanded,0))`，把变量拧到 0 就是 72px 图标条 —— 不碰任何节点，也不会被 React 重渲染冲掉。
 
-还没接回来的：`placementTracking` 没了，**推广推文暂时收不掉**；`pillLabel` 没了，提示条只走 pill.ts 的按文案扫描；引用卡的 16px 圆角、通知条目的留白也只能先挂着。
+还没接回来的：`pillLabel` 没了，提示条只走 pill.ts 的按文案扫描；引用卡的 16px 圆角、通知条目的留白也只能先挂着。
 
 ### 0.2.1：三处「JS 抢不过 React」
 
@@ -145,6 +144,40 @@ X 的外壳是 `mx-auto` 居中的（vw 1414 时外壳 1280、落在 x=67），�
 - **不能用 `div[class*="--x-main-column-width"]:has(main):not(:has(…))` 选外壳**：外壳与内层 grid 都带这个 class，外壳因为「含有同类后代」被 `:not()` 排除，那条规则永远不落地。选外壳只能用 `body > div[class*="mx-auto"]`。
 
 调试提醒：本机的「插件管理」是夸克自绘的 React 面板，不是 `chrome://extensions`，没有「重新加载」按钮。改完 `dist` 后要重载扩展，必须**定向**调 x-margin 自己的 service worker（`flbbcjlgmce…`）里的 `chrome.runtime.reload()`；按 `chrome-extension://` 前缀随便取第一个 SW 会命中「资源检测」，于是白改半天 —— 页面里读到的 manifest 版本号就是最快的判据（版本没变＝重载的不是它）。
+
+### 0.2.4：去广告整条链路删掉
+
+推广推文本可以不看，但两套实现都不值得留：
+
+| 那套规则 | 为什么删 |
+|---|---|
+| CSS `:has([data-testid="placementTracking"])` 三条 | X 换新版后 `placementTracking` 已经没了，规则一条都命中不了，只剩死代码 |
+| JS `isNoise()` → `.xm-noise` → `display:none` | 纯启发式：格子内没有 `article` 就算杂物，再拿「who to follow / 垃圾信息」文案兜底。虚拟列表会回收 `li[data-index]` 复用，标记跟着跑到正常推文上，那条就整条消失 —— 代码里原先那句「滚到深处或点开某条推文，那一条凭空消失，且往回滚也不复现」写的正是这个 |
+
+删掉的东西：`settings.layout.hideAds`、面板「隐藏推广」开关、`html.xm-noads` 三条推广规则与两条 `.xm-noise` 规则、`feed.ts` 里 `isNoise` / `markNoise` / `SPAM_RE` / `NOISE_RE` / `NOISE_CLS` / `lastNoiseScan`。`applyFlat` 与 `reflowCards` 不再为此补重排。
+
+代价只有一个：推广推文（`Ad` 角标那种）会正常出现在时间线里。要恢复只能回滚提交 —— 这正是不留开关的原因，半开的开关比没有更容易让人以为「是不是它把推文吃掉了」。
+
+⛔ 不要再加回「无 `article` 即隐藏」这类判定。想动推广，只能认稳定且只属于广告的锚点（新版目前没有）；拿「看起来不像推文」当条件，等于给虚拟列表的节点复用埋雷。
+
+### 0.2.5：媒体直角化的锚点也换掉
+
+0.2.4 删掉去广告之后，视频自己恢复了正常，但图片、视频、引用卡的圆角一起回来了 —— 不是去广告连累的，是「媒体直角化」那一组规则还挂在 `[data-testid="primaryColumn"]` / `tweetPhoto` / `video-*` / `card.*` / `User-Name` / `tweetText` 上，新版这些 testid **实测全为 0 个**，一组都命中不了。
+
+新版没有 testid 可认，改按 CDN 路径认媒体：
+
+| 要清的目标 | 新判据 |
+|---|---|
+| 正文图片（单图 / 图集） | `:has(img[src*="pbs.twimg.com/media"])` |
+| 外链卡封面 | `:has(img[src*="pbs.twimg.com/card_img"])` |
+| 视频 | `:has(video)`；另加 `::after` 一条（视频容器在伪元素里还画了一圈带圆角的内描边） |
+| 引用卡 | `:has(article)`（article 里还嵌着 article），连带 `border:0` 与 `box-shadow:none` |
+
+用 src 前缀是为了把头像排除掉：头像是 `pbs.twimg.com/profile_images`，正文图是 `/media/`。圆角不在 `img` 上而在媒体外层的 `div` / `a` 上（实测 28.8 / 16 / 14.4px），所以选择「含媒体的容器」而不是 `img` 本身。
+
+实测（vw 1414 / 840 主栏）：主栏内 `≥150×80` 的圆角元素 **18 → 0**，头像仍是 `9999px` 圆形、按钮 10% 未受影响，视频容器 `0px`。同一批里顺手删掉两条已失效的弹层选择器（`modalDialog` / `sheetDialog` 实测 0 个），`[role="dialog"]` 那两档保留 —— 它们本来就在生效。
+
+⛔ 还留着一批同源死规则：`[data-testid="primaryColumn"]` / `cellInnerDiv` 在样式表里仍有二十多处（卡片模式的内边距、线程线、通知留白、加宽兜底）。它们**目前靠 JS 打的 class 与 `main li[data-index]` 那几条新规则兜住**，视觉上看不出问题，但都是空转；要清得整批迁移，别一条条改。
 
 ### 背景怎么铺到 X 底下
 
@@ -240,22 +273,6 @@ X 的「纯黑」（Lights out）配色是 `#000` 底 + `#f7f9f9` 字，实测�
 可调：`--xm-soft-fg`，想更柔可以在面板之外改成 `#bec4c9`（对比度 11.9:1）。
 
 
-### 广告怎么认出来的
-
-X 的广告（promoted tweet）在 DOM 里**没有稳定的 class**（全是构建哈希），「Ad」也只是个纯文本标签 —— CSS 匹配不到文本，按文本匹配又容易误伤正文里出现 "Ad" 的正常推文。真正稳定的锚点是 `[data-testid="placementTracking"]`：广告单元都要挂一个曝光追踪容器，否则广告主没数据。社区里的去广告脚本（x-ad-filter、各种 userscript）用的都是它。
-
-三条规则覆盖三种已知嵌套，并且**隐藏整条 `cellInnerDiv`** 而不是里面的标签（只藏标签会留下一个空白格）：
-
-```css
-html.xm-noads [data-testid="cellInnerDiv"]:has([data-testid="placementTracking"]),
-html.xm-noads [data-testid="placementTracking"]:has(article[data-testid="tweet"]),
-html.xm-noads article[data-testid="tweet"]:has([data-testid="placementTracking"]) { display: none !important }
-```
-
-为什么用 CSS `:has()` 而不用 JS 扫：X 的时间线是虚拟滚动，cell 随时增删，`MutationObserver` 扫一遍再打 class 永远慢半拍（会闪一下），而 `:has()` 是样式系统实时求值，新插入的广告当帧就没了。`:has()` 从 Chrome 105 起支持，构建 target 是 chrome110。
-
-不按文本匹配「推广 / 广告 / Ad」是**故意**的：正文里出现这些词的正常推文太多，为了多抓几个边缘广告去赌误杀不值得。真遇到 `placementTracking` 没覆盖的广告位，再单独加定位规则。
-
 ### 去边框线条：三处线，三种清法
 
 页面上原本有三类线，性质不同，清法也不同：
@@ -264,13 +281,14 @@ html.xm-noads article[data-testid="tweet"]:has([data-testid="placementTracking"]
 |---|---|---|
 | 主栏左右两条 1px 竖线 | `primaryColumn`（把整条时间线框成一根「栏」） | CSS `border-left/right:0` —— 这类线一定画在这一层，不用认结构 |
 | 推文之间的横向分割线 | 可能画在 cell、cell 的 wrapper 或更外层容器 | JS 沿祖先链从 cell 一路清到主栏（内联 `border-bottom:0`），CSS 只覆盖前三层 |
-| 引用卡片的 16px 圆角 + 1px 描边 | 引用卡片外层（层数每个版本都变） | 两个入口：① 从嵌套 `article` 往上**到外层 `article` 之间的每一层都打** `.xm-quote`（结构式，不看此刻有没有圆角）；② 卡片内没有嵌套 `article` 时，从卡片里的 `tweetText` 往上找「含 `User-Name` + 圆角 ≤100px + 宽 ≥150px」的层 |
-| 内嵌图片的 16px 圆角 | `<a>` 与外面几层 div 上（圆角不在 `img` 上，靠 `overflow:hidden` 裁切） | JS 从 `[data-testid="tweetPhoto"]` 一路上到 `article` 逐层打 `.xm-photo`（结构式） |
-| 外链卡 / 视频封面的 16px 圆角 + 1px 描边 | 同上，但封面不叫 `tweetPhoto`（`img` / `video` / 背景图三种写法） | JS 以「媒体本身」为种子逐层上溯打 `.xm-media`；半径只用来认全圆（跳过头像 / 圆标），宽 <100px 的种子跳过 |
+| 引用卡片的 16px 圆角 + 1px 描边 | 引用卡片外层（层数每个版本都变） | 声明式：`:has(article)` —— article 里还嵌着 article 的就是引用卡外层，连带 `border:0` 与 `box-shadow:none` |
+| 内嵌图片 / 视频 / 外链卡封面的圆角 | 媒体外层的 `div` / `a` 上（圆角不在 `img` 上，靠 `overflow:hidden` 裁切） | 声明式 CSS，不认 testid：`:has(img[src*="pbs.twimg.com/media"])`、`:has(img[src*="pbs.twimg.com/card_img"])`、`:has(video)`、`:has(article)` —— 见「0.2.5：媒体直角化的锚点也换掉」 |
 
 引用卡片的**底色留着** —— 块与块的区分靠底色，不靠线。
 
 ### 圆角标记为什么不能「按当前样式判」
+
+> **0.2.0 起已改为声明式 CSS，`.xm-quote / .xm-photo / .xm-media` 那套 JS 标记在代码里一行不剩**（本节只留「为什么不能按当前样式判」的来龙去脉）。现行做法见 `QUOTE_CSS` 里「媒体直角化」那段注释，与上面「0.2.5」节。
 
 旧实现每 1.5 秒跑一次 `applyFlat`，**开头先把 `.xm-quote / .xm-photo / .xm-media` 全部摘掉**，再按「这一层此刻有没有圆角」重新判一遍。两个后果叠加，就是鼠标一移、圆角与直角来回切：
 
@@ -402,7 +420,7 @@ X 的虚拟列表用 `translateY` 定位每条 `cellInnerDiv`，值来自它内�
 2. 逐条写回 `translateY`，带 `!important`（X 之后重设行内样式也压不掉，位置由我们负责）；
 3. 第一条的原始 Y 作基准，不整体上移；
 4. 同步时间线容器的 `min-height`，否则最后几条滚不到；
-5. `display:none` 的 cell（广告 / 折叠项）高度为 0，跳过不计。
+5. `display:none` 的 cell（折叠项）高度为 0，跳过不计。
 
 调用时机：`sync()` 后一帧、每 500ms 的 tick、以及 `scroll`/`resize`（rAF 合并）—— 图片加载完会改 cell 高度，跟不上就会叠住。函数幂等：位置正确时一次不写。
 

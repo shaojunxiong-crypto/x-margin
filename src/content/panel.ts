@@ -367,9 +367,6 @@ export function createPanel(opts: PanelOptions): PanelApi {
     });
 
     card = section('推文流');
-    sw(card, '隐藏推广', '广告推文整条收起，不留空白', s.layout.hideAds, (v) => {
-      void opts.update({ layout: { ...s.layout, hideAds: v } }).then(render);
-    });
     {
       const f = field(card, '宽度', `${s.layout.feedWidth}px`);
       seg<FeedWidth>(f.box, [[600, '600'], [720, '720'], [840, '840']], s.layout.feedWidth, (v) => {

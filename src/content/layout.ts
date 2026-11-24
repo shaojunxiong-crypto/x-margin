@@ -50,7 +50,6 @@ export function applyLayout(l: Layout): void {
   html.classList.toggle('xm-noside', l.hideSidebar);
   html.classList.toggle('xm-noscroll', l.noScrollbar);
   html.classList.toggle('xm-nofloat', l.hideFloats);
-  html.classList.toggle('xm-noads', l.hideAds);
   html.classList.toggle('xm-card', l.cardFeed);
   html.style.setProperty('--xm-feed-w', `${l.feedWidth}px`);
   const wide = l.feedWidth !== 600;

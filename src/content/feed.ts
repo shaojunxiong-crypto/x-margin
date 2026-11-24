@@ -7,7 +7,6 @@ import { avatarOf, cellOf as anchorCellOf, cells as feedCells, column, tweets as
 
 const FLAT_CELL_CLS = 'xm-cell-flat';
 const JOINER_CLS = 'xm-joiner';
-const NOISE_CLS = 'xm-noise';
 
 /** 回复链：同一条链上的 cell 只在首尾裁切，中间不裁，竖线才连得住 */
 const THREAD_TOP = 'xm-thread-top';
@@ -131,70 +130,6 @@ function isJoiner(cell: HTMLElement): boolean {
 }
 
 /**
- * 信息流里没有正文的杂物格子 —— 跟推广一起收掉：
- *  · 垃圾折叠入口（「显示可能的垃圾信息」）
- *  · 推荐关注模块（标题格 + 每条 UserCell）
- * 它们既不是推文，也没有 out-of-card 的排版，留着就是一条裸露文字或被裁半行。
- */
-const SPAM_RE =
-  /显示可能的垃圾信息|可能包含垃圾信息|显示更多可能的|Show (more )?probable spam|probable spam|Show spam|スパムの可能性/i;
-/** 推荐关注模块的标题格。X 把标题单独放一格，后面每条推荐各占一格。 */
-const NOISE_RE =
-  /who to follow|推荐关注|关注推荐|你可能想关注|可能认识的人|follow 推荐|フォローする人/i;
-
-/** 杂物块扫描的限频时间戳 */
-let lastNoiseScan = -1e9;
-
-/**
- * 判定单个格子是不是该整条收起。有推文的正文字段一律放行 ——
- * 有人在正文里讨论「垃圾信息」「who to follow」不算。
- */
-function isNoise(cell: HTMLElement): boolean {
-  if (cell.querySelector('article')) return false;
-  if (cell.querySelector('[data-testid="UserCell"]')) return true;
-  const txt = (cell.textContent || '').trim();
-  if (!txt) return false;
-  if (SPAM_RE.test(txt)) return true;
-  // 标题很短，正文不会被误伤；不做 ^$ 锚定是因为标题格里可能带「显示更多」之类
-  return txt.length <= 40 && NOISE_RE.test(txt);
-}
-
-/**
- * 藏掉杂物格子。只在开启「隐藏推广」时生效，跟广告同一个开关。
- * 作用域限主栏 —— 右栏那个「Who to follow」模块是常驻组件，不动它。
- *
- * ⛔ 每轮都重判、不成立就摘，不做「打了就跳过」的缓存。
- * 这条规则带 display:none，是「删除内容」而不是「换外观」：
- * X 的虚拟列表会回收 `cellInnerDiv` 节点挪到别处复用，标记打在节点上，
- * 复用到一条正常推文时它就被整条吞掉；详情页还存在「先建空壳、后挂 article」
- * 的间隙，那一瞬间判出来的结果同样会永久留着。
- * 缓存版实测症状：滚到深处或点开某条推文，那一条凭空消失，且往回滚也不复现。
- * ⛔ 撤销必须补 reflowCards：高度从 0 恢复，后面的 translateY 全是按 0 算的。
- */
-export function markNoise(): void {
-  const html = document.documentElement;
-  const now = performance.now();
-  if (now - lastNoiseScan < 600) return;
-  lastNoiseScan = now;
-  const col = column();
-  if (!col) return;
-  const on = html.classList.contains('xm-noads');
-  let touched = 0;
-  feedCells(col).forEach((cell) => {
-    const marked = cell.classList.contains(NOISE_CLS);
-    // 关闭开关时一律不成立，走「摘掉」分支
-    const hit = on && isNoise(cell);
-    if (hit === marked) return;
-    if (hit) cell.classList.add(NOISE_CLS);
-    else cell.classList.remove(NOISE_CLS);
-    touched++;
-  });
-  html.dataset.xmNoise = String(col.querySelectorAll('.' + NOISE_CLS).length);
-  // 高度一变（0 ⇄ 原高），下面的 translateY 必须重排，否则要么留空带、要么叠住
-  if (touched && html.classList.contains('xm-card')) requestAnimationFrame(() => reflowCards());
-}
-
-/**
  * 「发现更多 / 源自于整个 X」：推文详情页回复列表之后那颗相关推文流的分区标。
  * 它既不是推文也不匹配 JOINER_RE，卡片模式按 15px 裁切却不补内边距 ——
  * 原来那两行字被削掉字头字脚，按内层结构改单行在真机上更差（层级/内边距与模拟不一致）。
@@ -222,7 +157,7 @@ let lastMoreScan = -1e9;
 
 /**
  * 标记「发现更多」小节条。
- * ⛔ 与 markNoise 同理：每轮重判、不成立就摘。这条规则会把格内所有子元素
+ * ⛔ 每轮重判、不成立就摘。这条规则会把格内所有子元素
  * display:none 并锁死高度，一旦标记跟着被复用的节点跑到一条正常推文上，
  * 那条推文就只剩一个 `···` 小牌（看起来像被换掉了）。
  * ⛔ 撤销同样要补 reflowCards：锁定的 74px 恢复成自然高度，后面的 translateY 全错。
@@ -492,7 +427,7 @@ export function applyFlat(on: boolean): void {
   const html = document.documentElement;
   html.classList.toggle('xm-flat', on);
   if (!on) {
-    for (const cls of [FLAT_CELL_CLS, JOINER_CLS, NOISE_CLS, ...THREAD_CLS]) {
+    for (const cls of [FLAT_CELL_CLS, JOINER_CLS, ...THREAD_CLS]) {
       document.querySelectorAll<HTMLElement>('.' + cls).forEach((el) => el.classList.remove(cls));
     }
     // 「发现更多」小节条是 dataset 属性，上面那个 class 循环管不到它 —— 原先
@@ -512,9 +447,7 @@ export function applyFlat(on: boolean): void {
   if (!col) return;
 
   const cw = col.getBoundingClientRect().width || 0;
-  // 0) 先把「可能的垃圾信息」入口藏掉，后面的分组 / 重排就不用管它
-  markNoise();
-  // 0.5) 相关推文流的分区条：只打属性，高度不变，不需要重排
+  // 0) 相关推文流的分区条：只打属性，高度不变，不需要重排
   markMoreSection();
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
   const arts = feedTweets(col);

@@ -35,8 +35,6 @@ export interface Layout {
   hideCompose: boolean;
   /** 推文流宽度 */
   feedWidth: FeedWidth;
-  /** 隐藏推文流里的推广 / 广告推文 */
-  hideAds: boolean;
   /** 每条推文独立成块：主栏不铺底板，推文之间留缝（clip-path 裁，不动 X 的定位） */
   cardFeed: boolean;
   /** 隐藏页面（根滚动容器）的滚动条：只去掉绘制，滚轮 / 键盘 / 触控板照常；弹窗与列表内部的滚动条不动 */
@@ -65,7 +63,7 @@ export const SHADERS: ShaderId[] = ['aurora', 'silk', 'mesh', 'grain', 'ice', 'v
 export const DEFAULTS: Settings = {
   bg: { mode: 'off', shader: 'aurora', intensity: 0.85, pool: [], glass: 'mid' },
   font: { choice: 'x', custom: '' },
-  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, hideAds: true, cardFeed: true, noScrollbar: true, hideFloats: true },
+  layout: { hideSidebar: true, railNav: true, railHide: [], railSeedV: 0, hideCompose: true, feedWidth: 720, cardFeed: true, noScrollbar: true, hideFloats: true },
   theme: 'auto',
   accent: '#1d9bf0',
   softText: true,
@@ -130,7 +128,6 @@ export function sanitize(raw: unknown): Settings {
             : 0,
       hideCompose: typeof l.hideCompose === 'boolean' ? l.hideCompose : DEFAULTS.layout.hideCompose,
       feedWidth: l.feedWidth === 600 || l.feedWidth === 840 ? l.feedWidth : 720,
-      hideAds: typeof l.hideAds === 'boolean' ? l.hideAds : DEFAULTS.layout.hideAds,
       // 常开：这是当前唯一的推文流排版，不走设置项，旧配置一律覆盖成 true
       cardFeed: true,
       // 这几个字段旧配置里没有，缺省必须落 true，否则升级后功能倒退

@@ -51,12 +51,17 @@ html.xm-dark.xm-soft [data-testid="User-Name"]{color:var(--xm-soft-fg,#c8ced3)!i
 `;
 
 /**
- * 去线条与直角化。圆角/描边的元素一律由 JS 打标记（.xm-quote / .xm-photo / .xm-media），
- * CSS 只认自有 class —— X 的嵌套深度每个版本都在变，写死层级会静默失效。
+ * 去线条与直角化。
+ * 圆角与描边**不再由 JS 打标记**（0.1.x 的 .xm-quote / .xm-photo / .xm-media 已废弃）：
+ * X 悬停 / 懒加载 / 虚拟列表复用时会把包装层整块换掉，标记留在旧节点上，新节点要等
+ * 观察器防抖才补，实测鼠标连续移动 2.5 秒有 90.5% 的帧仍是圆角。
+ * 现在全部走声明式选择器（见下面「媒体直角化」一段）：节点一建出来就命中，零窗口期。
+ * ⛔ 也别写死层级 —— 层级每个版本都在变，能认锚点/结构就认锚点。
  */
 const QUOTE_CSS = `
-html.xm-flat [data-testid="primaryColumn"],
-html.xm-flat [data-testid="primaryColumn"]>div{
+/* 主栏左右两条竖线：旧锚点 primaryColumn 已消失（0.2.5 记），新版主栏是 main。 */
+html.xm-flat main,
+html.xm-flat main>div{
   border-left:0!important;border-right:0!important;
 }
 html.xm-flat .xm-cell-flat,
@@ -72,38 +77,36 @@ html.xm-flat .xm-cell-flat>div>div>div{
  * 90.5% 的帧仍是圆角、中间切换 28 次 —— 就是「圆角直角来回切」的真身。
  * 下面这几条是声明式的：节点一建出来就命中，零窗口期（实测 217 帧零圆角）。
  * :has() 的开销与属性选择器同量级（40 条推文反复重算：1.1ms vs 0.4ms）。 */
-html.xm-flat [data-testid="primaryColumn"] article :has([data-testid="tweetPhoto"]),
-html.xm-flat [data-testid="primaryColumn"] article :has([data-testid^="video"]),
-html.xm-flat [data-testid="primaryColumn"] article :has([data-testid^="card."]){
+/* 0.2.5 换锚点：新版没有 primaryColumn / tweetPhoto / video-* / card.* / User-Name / tweetText
+ * 这些 testid（实测全为 0 个），原来那组选择器整片落空，媒体圆角因此全回来。
+ * 新版按 CDN 路径认媒体：正文图 pbs.twimg.com/media、外链卡封面 pbs.twimg.com/card_img、
+ * 头像 pbs.twimg.com/profile_images —— 用 src 前缀刚好把头像排除在外（头像必须保持圆形）。
+ * 视频没有 src 可认，直接 :has(video)。圆角落在媒体外层的 div / a 上（实测 28.8 / 14.4 / 16px），
+ * 所以选「含媒体的容器」，不是 img 本身。 */
+html.xm-flat main article :has(img[src*="pbs.twimg.com/media"]),
+html.xm-flat main article :has(img[src*="pbs.twimg.com/card_img"]),
+html.xm-flat main article :has(video){
   border-radius:0!important;
 }
-/* 引用卡：容器里既有用户信息又有正文。⛔ 不能写成「article > :has(...)」—— 引用卡的 User-Name
- * 通常裹在一两层 div 里，直接子选择器会漏掉容器本身，圆角就留在外层。 */
-html.xm-flat [data-testid="primaryColumn"] article :has([data-testid="User-Name"]):has([data-testid="tweetText"]){
+/* 视频容器另在 ::after 里画一圈带圆角的内描边，跟外壳一起铲平 */
+html.xm-flat main article :has(video)::after{border-radius:0!important}
+/* 引用卡：新版没有 User-Name / tweetText 可判，改成「article 里还嵌着 article」。
+ * 外层容器带 16px 圆角 + 1px 描边，一起清掉。
+ * ⛔ 不要写直接子选择器：引用卡外面还裹着 flex 容器，只认直接父层会漏。 */
+html.xm-flat main article :has(article){
   border-radius:0!important;
   border:0!important;
   box-shadow:none!important;
 }
-html.xm-flat [data-testid="primaryColumn"] article [data-testid="tweetPhoto"] img,
-html.xm-flat [data-testid="primaryColumn"] article [data-testid="tweetPhoto"] video,
-html.xm-flat [data-testid="primaryColumn"] article video{border-radius:0!important}
 /* 回复 / 发帖弹层：X 给外壳 16px 圆角 + 大投影，浮在页面上跟「全局直角」明显两套语言。
-   只压外壳三档 —— role=dialog 本身、它的直接子层（居中容器）、modalDialog 及其直接子层。
+   只压外壳两档 —— role=dialog 本身、它的直接子层（居中容器）。
    ⛔ 绝不写 [role="dialog"] *：那会把弹层里的头像（9999px）、媒体预览、按钮一起铲平。
-   ⛔ 也不加 overflow:hidden 之外的任何改动：弹层内部排版由 X 自己算，动宽高会错位。 */
+   ⛔ 也不加 overflow:hidden 之外的任何改动：弹层内部排版由 X 自己算，动宽高会错位。
+   ⛔ 0.2.5：新版没有 data-testid="modalDialog" / "sheetDialog"（实测 0 个），那几组
+   选择器连同依赖它们的投影规则一起删了。要加回来先确认 testid 真的还在。 */
 html.xm-flat [role="dialog"],
-html.xm-flat [role="dialog"]>div,
-html.xm-flat [role="dialog"] [data-testid="modalDialog"],
-html.xm-flat [role="dialog"] [data-testid="modalDialog"]>div,
-html.xm-flat [data-testid="sheetDialog"],
-html.xm-flat [data-testid="sheetDialog"]>div{
+html.xm-flat [role="dialog"]>div{
   border-radius:0!important;
-}
-/* 投影：原来那圈大投影是给圆角弹层做「浮起」的，去角后会把弹层糊在遮罩里，
-   换成 1px 发丝环（box-shadow 画，不占盒子、不改尺寸），与卡片的描边同一档。 */
-html.xm-flat [data-testid="modalDialog"],
-html.xm-flat [data-testid="sheetDialog"]{
-  box-shadow:0 0 0 1px var(--xm-line,rgba(128,128,128,.26))!important;
 }
 `;
 
@@ -351,13 +354,6 @@ html.xm-wide [data-testid="primaryColumn"] > div:has([data-testid="cellInnerDiv"
 html.xm-wide [data-testid="primaryColumn"] > div > div:has([data-testid="cellInnerDiv"]){
   max-width:var(--xm-feed-w,720px)!important;
 }
-/* 推广：placementTracking 是唯一稳定锚点（「Ad」只是文本）。三种嵌套都要收，整条 cell 一起藏才不留空。 */
-html.xm-noads [data-testid="cellInnerDiv"]:has([data-testid="placementTracking"]),
-html.xm-noads [data-testid="placementTracking"]:has(article[data-testid="tweet"]),
-html.xm-noads article[data-testid="tweet"]:has([data-testid="placementTracking"]){display:none!important}
-/* 信息流杂物：垃圾折叠入口、推荐关注模块（标题 + UserCell）。不是推文，整条收掉。
-   作用域只到主栏的 cellInnerDiv —— 右栏常驻的 Who to follow 不受影响。 */
-html.xm-noads [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-noise{display:none!important}
 html.xm-nocompose .xm-comp-hide{display:none!important}
 html.xm-hidecompose [data-testid="SideNav_NewTweet_Button"]{display:none!important}
 /* 滚动条：只碰根容器，弹窗与列表内部保留。两条缺一不可 —— 只写 scrollbar-width 时 Windows 的经典滚动条还在。 */
@@ -509,8 +505,7 @@ html.xm-card main li[data-index].xm-thread-end::before{
 html.xm-card main li[data-index].xm-thread-end::before{bottom:auto;height:var(--xm-le,44px)}
 html.xm-card main li[data-index].xm-thread-top::before{top:var(--xm-ls,0px)}
 
-/* ── 杂物与分区条：标记打在 li 上 ── */
-html.xm-noads main li[data-index].xm-noise{display:none!important}
+/* ── 分区条：标记打在 li 上 ── */
 html.xm-card main li[data-index][data-xm-more-sec]{
   height:74px!important;min-height:0!important;max-height:74px!important;
   padding:0!important;margin:0!important;overflow:hidden!important;

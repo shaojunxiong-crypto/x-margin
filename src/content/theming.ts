@@ -120,10 +120,63 @@ function alpha(hex: string, a: number): string {
 
 /** 强调色挂在 html 上，派生两个半透明色给选中态与光晕用 */
 export function applyAccent(hex: string): void {
+  accentHex = hex;
   const st = document.documentElement.style;
   st.setProperty('--xm-acc', hex);
   st.setProperty('--xm-acc-soft', alpha(hex, 0.16));
   st.setProperty('--xm-acc-glow', alpha(hex, 0.45));
+}
+
+/** 当前设置里的强调色；paintBrand 用它改写 X 的内联品牌色 */
+let accentHex = '';
+
+/**
+ * 把 X 自己写进**内联样式**的品牌色换成设置里的强调色（0.2.15）。
+ *
+ * 0.2.14 之前靠 `[class~="text-brand"]` 一类的类名覆盖，新版这些类名一个都没有了
+ * （2026-11-25 实测 `text-brand` / `bg-brand` 各 0 个），改法换成「JS 先把颜色算好、
+ * 再以字面量写进 style」——实测 tab 下划线是 `background-color: rgb(29,155,240)`，
+ * 覆盖 `--x-fg-brand` / `--x-btn-brand` 之后这个内联值**一字不变**，所以变量那条路也断。
+ * ⇒ 只能按值改写内联样式，回到「设置什么色，页面就是什么色」。
+ *
+ * ⛔ 只认品牌色：like 红、repost 绿、金标都是语义色，跟强调色无关，不能一起铲。
+ * ⛔ 值比较后再写；X 重渲染会把内联值刷回去，所以由 1.5 秒心跳补拍，不是一次性。
+ */
+const BRAND_ATTR = ['--x-fg-brand', '--x-btn-brand', '--x-blue-500'];
+let brandAt = -1e9;
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  return [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)];
+}
+
+export function paintBrand(): void {
+  if (!accentHex) return;
+  const now = performance.now();
+  if (now - brandAt < 1500) return;
+  brandAt = now;
+
+  const cs = getComputedStyle(document.documentElement);
+  const want = hexToRgb(accentHex);
+  if (!want) return;
+  // 取 X 自己的品牌色：跳过等于设置色的那一个，否则会「自己改自己」永远空转
+  let from: [number, number, number] | null = null;
+  for (const name of BRAND_ATTR) {
+    const rgb = hexToRgb(cs.getPropertyValue(name));
+    if (rgb && (rgb[0] !== want[0] || rgb[1] !== want[1] || rgb[2] !== want[2])) { from = rgb; break; }
+  }
+  if (!from) return;
+
+  const [fr, fg, fb] = from;
+  const [tr, tg, tb] = want;
+  const re = new RegExp(`rgba?\\(\\s*${fr}\\s*,\\s*${fg}\\s*,\\s*${fb}\\s*(?:,\\s*([\\d.]+)\\s*)?\\)`, 'gi');
+  const sel = `[style*="${fr}, ${fg}, ${fb}"],[style*="${fr},${fg},${fb}"]`;
+  for (const el of document.querySelectorAll<HTMLElement>(sel)) {
+    const s = el.getAttribute('style') || '';
+    const next = s.replace(re, (_m, a?: string) => (a ? `rgba(${tr},${tg},${tb},${a})` : `rgb(${tr}, ${tg}, ${tb})`));
+    if (next !== s) el.setAttribute('style', next);
+  }
 }
 
 /**

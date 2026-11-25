@@ -103,6 +103,16 @@ html.xm-flat main article :has(article){
   border:0!important;
   box-shadow:none!important;
 }
+/* 0.2.15：引用卡不再用嵌套 article 渲染（2026-11-25 实测 article 内 article = 0 个，
+   而带两条 tweetText 的推文有 4 条），圆角因此整片回来。
+   新结构：div[role="link"]，16px 圆角 + 0.67px 描边 rgb(207,217,222)，里面装着被引用那条的 tweetText。
+   ⛔ 判据用「含 tweetText 的 role=link」，不能只认 role=link：媒体卡、外链卡也带这个 role，
+      一起铲会把该保留的圆角也削掉（虽然本皮肤本来就直角）。 */
+html.xm-flat main article div[role="link"]:has([data-testid="tweetText"]){
+  border-radius:0!important;
+  border:0!important;
+  box-shadow:none!important;
+}
 /* 回复 / 发帖弹层：X 给外壳 16px 圆角 + 大投影，浮在页面上跟「全局直角」明显两套语言。
    只压外壳两档 —— role=dialog 本身、它的直接子层（居中容器）。
    ⛔ 绝不写 [role="dialog"] *：那会把弹层里的头像（9999px）、媒体预览、按钮一起铲平。
@@ -524,6 +534,14 @@ html.xm-card main li[data-index].xm-thread-mid article{
 html.xm-card main li[data-index].xm-thread-end article{
   padding-top:calc(var(--xm-card-pad,19px) - var(--xm-card-gap,15px))!important;
   padding-bottom:var(--xm-card-pad,19px)!important;
+}
+/* 操作栏宽度：X 给每个推文的 role=group 挂了 max-width:600px（2026-11-25 实测，
+   主栏 840、内容区 808），于是五个计数挤在左边 600px 里，右侧空出 160px，
+   「收藏 / 分享 / 截图」悬在卡片中间（用户报「按钮的位置」）。放宽到整栏，与本皮肤的
+   加宽主栏对齐。⛔ 只认带 aria-label 的那条操作栏，别的 group（主题选择等）不碰。 */
+html.xm-card main article div[role="group"][aria-label*="回复"],
+html.xm-card main article div[role="group"][aria-label*="eply"]{
+  max-width:none!important;
 }
 /* 「发现更多」分区标题：同 OLD 一套，补回被卡片上沿裁掉的 15px */
 html.xm-card main [data-xm-more-head]{padding-top:var(--xm-card-gap,15px)!important}

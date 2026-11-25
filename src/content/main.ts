@@ -13,7 +13,7 @@ import { initShot } from './shot';
 import { initStage } from './stage';
 import { injectBase } from './styles';
 import { applyTheme, enforceTheme, onSystemThemeChange, reloadForTheme, resolveTheme } from './theme';
-import { applyAccent, applyFont, applySkin, detectTheme, type Theme } from './theming';
+import { applyAccent, applyFont, applySkin, detectTheme, paintBrand, type Theme } from './theming';
 
 /** 首次开启图标栏时保留的图标个数（含顶部的 X logo） */
 const RAIL_KEEP = 5;
@@ -255,6 +255,8 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
         }
       }
       ui?.place(settings.layout.railNav);
+      // X 把品牌色写死在内联样式里，重渲染就会刷回去 —— 跟主题同一个节拍补拍
+      paintBrand();
     }
     // 主栏身份变化：一次 querySelector，代价可忽略
     if (now - lastWideBind > 300) {

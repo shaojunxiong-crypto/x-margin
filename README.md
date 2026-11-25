@@ -367,6 +367,42 @@ html.xm-card main [data-xm-more-head]{ padding-top:var(--xm-card-gap,15px)!impor
 
 实测（详情页）：`padding-top 15px`、`h2` 盒高 24→39、字顶距卡片上沿 **1px → 12px**、左侧 16px 不变（与推文头像同一列）；格高 2337 未错位。
 
+### 0.2.15：X 换了品牌色与引用卡的做法，三处补丁失效
+
+用户在同一个早上报了四处，其中三处是**锚点整批失效**，一处不是缺陷（见文末「页头高度」）。判定方法都是同一套：先看别的皮肤特性还在不在 —— 卡片裁切、壁纸、字体、无侧栏、截图按钮全正常 ⇒ 扩展活着，是 X 换了结构。
+
+**① 强调色不再生效。** 旧实现靠 `[class~="text-brand"]` 一类的类名覆盖（0.2.8 记过「改 `--color-brand` 无效」）。新版**连这些类名都没有了**（实测 `text-brand` / `bg-brand` 各 0 个），改成 JS 先把颜色算好、再以字面量写进内联样式：
+
+```
+tab 下划线  background-color: rgb(29, 155, 240)   ← 内联，不是 class
+```
+
+覆盖 `--x-fg-brand` / `--x-btn-brand` **也没用**（实测改完内联值一字不变）。⇒ 只能按值改写：新增 `paintBrand()`，取 X 自己的品牌色（`--x-fg-brand` → `--x-btn-brand` → `--x-blue-500`，跳过等于设置色的那个），把内联里的该色替换成 `--xm-acc`，由 1.5 秒心跳补拍（X 重渲染会刷回去）。
+
+⛔ 只换品牌色，like 红 / repost 绿 / 金标是语义色。
+⛔ 值比较后再写，稳态零写入。
+
+实测：下划线 `rgb(29,155,240)` → `rgb(249,24,128)`（设置里的 #f91880），页面残留蓝色 **0** 个。
+
+**② 操作栏被 X 限宽 600px。** 主栏 840、内容区 808，X 给操作栏 `role=group` 挂了 `max-width:600px`，五个计数挤在左边，右侧空出 160px，「收藏 / 分享 / 截图」悬在卡片中间。放开：
+
+```css
+html.xm-card main article div[role="group"][aria-label*="回复"],
+html.xm-card main article div[role="group"][aria-label*="eply"]{ max-width:none!important }
+```
+
+实测：组宽 600 → 760，最后一个图标右缘 975 = 内容区右缘。⛔ 只认带 aria-label 的操作栏，别的 `group` 不碰。
+
+**③ 引用推文又变回圆角。** 旧判据是「article 里还嵌着 article」，实测**嵌套 article 已是 0 个**（带两条 `tweetText` 的推文有 4 条，说明引用卡还在，只是换了渲染方式）。新结构：`div[role="link"]` + 16px 圆角 + 0.67px 描边 `rgb(207,217,222)`，里面装着被引用那条的 `tweetText`。补一条：
+
+```css
+html.xm-flat main article div[role="link"]:has([data-testid="tweetText"]){ border-radius:0!important;border:0!important;box-shadow:none!important }
+```
+
+⛔ 判据必须带「含 tweetText」：媒体卡、外链卡也带 `role=link`。实测引用卡 `border-radius 16px → 0`、描边 0。
+
+**页头高度：本次未改动，因为量下来是 X 原生的 53px。** 逐项实测：`[role=tablist]` 53px、`[role=tab]` 53px、文字盒 17..37（居中，中心 27 ≈ 栏中心 26.5）、下划线 4px 贴底（49..53）、白色底 840 宽与卡片同宽。本皮肤没有任何规则碰过标签栏（`git log -S "tablist" -- src/content/styles.ts` 为空）。若观感仍偏「高」，只可能是下划线贴底造成的错觉 —— 要压到 44px 之类的紧凑高度，得单独开一项。
+
 ### 背景怎么铺到 X 底下
 
 `.xm-bg` 是 `position: fixed; inset: 0; z-index: -1` 的一层，塞进 `body` 最前面。z-index 为负才会落在 `#react-root` 的所有内容之下；`html`/`body`/`#react-root` 的底色同时改成透明，否则整页底色会把画布糊死。

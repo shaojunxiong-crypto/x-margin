@@ -4,6 +4,7 @@ import { SHADER_NAMES } from './bg/shaders';
 import { compressImage } from './bg/background';
 import { shaderThumb } from './bg/program';
 import { railItems } from './rail';
+import { runProbes } from './probes';
 import { applyAccent } from './theming';
 import { themeStuck } from './theme';
 
@@ -179,6 +180,22 @@ const CSS = `
 .xm-ft{margin-top:13px;padding-top:10px;border-top:1px solid var(--xm-ui-line,rgba(255,255,255,.08));
   font:400 10px/1.6 inherit;color:var(--xm-ui-dim,#71767b)}
 .xm-ft b{font-weight:500;color:var(--xm-ui-sub,#8b98a5)}
+/* 诊断：一行一条探针。绿点正常、灰点跳过、强调色点异常。
+   ⛔ 方点不画圆角（全站直角的一致性）；⛔ 判据文字必须可省略号截断，面板只有 334px */
+.xm-diag-sum{flex:none;font:500 10px/1 inherit;color:var(--xm-ui-sub,#8b98a5)}
+.xm-diag-sum[data-bad="1"]{color:var(--xm-acc)}
+.xm-diag{display:flex;align-items:center;gap:7px;padding:6px 11px}
+.xm-diag+.xm-diag{border-top:1px solid var(--xm-ui-line,rgba(255,255,255,.08))}
+.xm-diag-d{flex:none;width:5px;height:5px;background:var(--xm-ui-dim,#71767b)}
+.xm-diag[data-state="ok"] .xm-diag-d{background:#00ba7c}
+.xm-diag[data-state="fail"] .xm-diag-d{background:var(--xm-acc)}
+.xm-diag[data-state="skip"] .xm-diag-d{opacity:.42}
+.xm-diag b{flex:none;font:500 11px/1.3 inherit;color:var(--xm-ui-fg,#e7e9ea);white-space:nowrap}
+.xm-diag i{flex:1;min-width:0;font-style:normal;font:400 9.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:var(--xm-ui-sub,#8b98a5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xm-diag em{flex:none;font-style:normal;font:500 9.5px/1 inherit;color:var(--xm-ui-dim,#71767b)}
+.xm-diag[data-state="fail"] em{color:var(--xm-acc)}
+.xm-diag-s{padding:0 11px 7px 23px;font:400 10px/1.45 inherit;color:var(--xm-ui-sub,#8b98a5)}
 .xm-hide{display:none!important}
 `;
 
@@ -501,6 +518,28 @@ export function createPanel(opts: PanelOptions): PanelApi {
           t = window.setTimeout(() => { void opts.update({ font: { ...s.font, custom: cleanFont(inp.value) } }); }, 350);
         };
         f.box.append(inp);
+      }
+    }
+    // —— 诊断：需求探针（判据与处置方式见 docs/REGISTRY.md 第六节）——
+    // 打开面板时现算一次：面板可能几分钟不关，心跳每 3 秒也会刷 dataset，这里以打开那一刻为准
+    {
+      const probes = runProbes({ cardFeed: s.layout.cardFeed, accent: s.accent });
+      const bad = probes.filter((p) => p.state === 'fail');
+      const sum = el('span', 'xm-diag-sum', bad.length ? `${bad.length} 项异常` : '正常');
+      sum.dataset.bad = bad.length ? '1' : '0';
+      card = section('诊断', sum);
+      for (const p of probes) {
+        const row = el('div', 'xm-diag');
+        row.dataset.state = p.state;
+        row.title = `${p.id} · ${p.symptom}`;
+        row.append(
+          el('span', 'xm-diag-d'),
+          el('b', undefined, p.name),
+          el('i', undefined, p.rule),
+          el('em', undefined, p.state === 'ok' ? '正常' : p.state === 'skip' ? '跳过' : '异常'),
+        );
+        card.append(row);
+        if (p.state === 'fail') card.append(el('div', 'xm-diag-s', `${p.id} · ${p.symptom}`));
       }
     }
     const ver = chrome.runtime?.getManifest?.().version ?? '';

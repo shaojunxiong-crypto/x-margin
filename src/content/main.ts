@@ -7,6 +7,7 @@ import { applyLayout, markComposer, markFloats, syncWidthVar, widenInner } from 
 import { markPageHead } from './pageHead';
 import { killPill } from './pill';
 import { createPanel, type PanelApi } from './panel';
+import { publishProbes, runProbes } from './probes';
 import { applyRail, railItems } from './rail';
 import { column, navRoot } from './sel';
 import { initShot } from './shot';
@@ -150,6 +151,7 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
   let lastThemeCheck = 0;
   let lastWideCheck = 0;
   let lastWideBind = 0;
+  let lastProbeCheck = 0;
   let scanTimer = 0;
   let reflowDue = false;
   let feedMo: MutationObserver | null = null;
@@ -255,9 +257,10 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
         }
       }
       ui?.place(settings.layout.railNav);
-      // X 把品牌色写死在内联样式里，重渲染就会刷回去 —— 跟主题同一个节拍补拍
-      paintBrand();
     }
+    // X 把品牌色写死在内联样式里，重渲染就会刷回去。挪到主题节拍之外、由
+    // paintBrand 自己按 800ms 限频 —— 挂在 1500ms 那层会让蓝色多留半秒。
+    paintBrand();
     // 主栏身份变化：一次 querySelector，代价可忽略
     if (now - lastWideBind > 300) {
       lastWideBind = now;
@@ -276,6 +279,13 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
         // 一次失败就再也不会重试，而旧版 testid 键在新版一个都匹配不上 ⇒ 整栏按钮全露着。
         if (settings.layout.railSeedV < RAIL_SEED_V) void seedRail();
       }
+    }
+    // 需求探针：3 秒一轮，只做 querySelectorAll + computedStyle，不写任何样式。
+    // 滚动中 X 的虚拟列表正在摘/插 cell，这时读会读到瞬时状态（li 还没插进来）⇒ 假警报；
+    // 让路给滚动，保留上一轮结果。判据与处置方式见 docs/REGISTRY.md 第六节。
+    if (!isScrolling() && now - lastProbeCheck > 3000) {
+      lastProbeCheck = now;
+      publishProbes(runProbes({ cardFeed: settings.layout.cardFeed, accent: settings.accent }));
     }
     if (reflowDue && settings.layout.cardFeed) {
       reflowDue = false;

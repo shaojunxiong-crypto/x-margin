@@ -154,7 +154,10 @@ function hexToRgb(hex: string): [number, number, number] | null {
 export function paintBrand(): void {
   if (!accentHex) return;
   const now = performance.now();
-  if (now - brandAt < 1500) return;
+  // 800ms 而不是 1500：X 新渲染的节点先带品牌蓝，等下一次补拍才换色，
+  // 这个窗口越长越容易被看见（也越容易把 R6 探针抖红）。选择器命中的是
+  // 极少量的内联节点，全量扫描一次约 1–2ms，这个频率可以承担。
+  if (now - brandAt < 800) return;
   brandAt = now;
 
   const cs = getComputedStyle(document.documentElement);

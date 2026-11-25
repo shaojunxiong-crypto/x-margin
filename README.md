@@ -9,6 +9,7 @@
 | 主题 | 白色 / 黑色 / 跟随系统（写 X 自己的 `night_mode`）+ 6 个强调色预设与取色器 |
 | 布局 | 去右栏、图标导航栏、隐藏发推入口、隐藏浮动按钮、隐藏滚动条、去边框、推文独立成块、主栏 600 / 720 / 840 |
 | 截图 | 每条推文操作栏里的相机按钮，整条截成 PNG（长推文自动分帧拼接），可下载或复制；预览里可勾「马赛克作者信息」，把作者行（含引用推文里的）压成像素块 |
+| 视频 | 禁止推文内视频自动播放：进入视口不再自己播，点一下才放；GIF 照常循环 |
 
 ## 安装
 
@@ -38,9 +39,11 @@ src/
     feed.ts              去线条与圆角、抹底板、虚拟列表重排
     panel.ts             设置面板与齿轮入口（含「诊断」小节）
     shot.ts              推文截图
+    autoplay.ts          自动播放拦截（隔离世界那一半：写开关、请求注入、兜底）
     anchor.ts            回退后的位置锚定
     theme.ts             night_mode cookie
     bg/                  着色器与背景层
+  mainworld/autoplay.ts  主世界里真正改 play() 的那一份（chrome.scripting 注入）
 docs/REGISTRY.md         需求登记 R1–R8、三个根因、决策矩阵、症状索引
 public/fonts/            字体子集与切片表
 public/icons/            扩展图标（黑底 X 字标，16 / 32 / 48 / 128）
@@ -535,6 +538,44 @@ html.xm-flat main article div[role="link"]:has([data-testid="tweetText"]){ borde
 - `captureVisibleTab` 截的是**当前活动标签**。自动化测试时新开的标签页如果不在前台，会拍到别的页面 —— 测试脚本必须先 `bringToFront()`。
 
 **验证**：详情页单帖、首页含引用卡的帖子、以及两段拼接的长图三类都实测过；`bands` 分别为 1 / 2 / 1，抹后体积从 132KB 降到 115KB；点文字与点方框都只切换一次；取消勾选后 `mosaic=0`、图片与文件名原样回来。
+
+
+### 0.2.19：禁止推文内视频自动播放
+
+面板「布局」里一个开关，默认开。进入视口的视频不再自己播，点一下才放；**GIF 照常循环**（用户裁定）。
+
+**第一版写错了世界。** 直接在 content script 里把 `HTMLMediaElement.prototype.play` 换成自己的 —— 判据、手势、开关全都对，但一格视频也拦不住。原因是 MV3 的内容脚本跑在**隔离世界**：它有一套自己的 DOM 原型链，X 的 React 在主世界调的那个 `play()` 跟这边不是同一个函数。这一层不解决，后面写什么都是空转。
+
+**正确做法是把补丁注入主世界**：
+
+- 源码拆两份：`src/content/autoplay.ts`（隔离世界）与 `src/mainworld/autoplay.ts`（主世界）；
+- 后者用 `chrome.scripting.executeScript({ target, world: 'MAIN', files: ['autoplay-main.js'] })` 注入，由后台代劳（内容脚本没有 scripting 权限）；
+- 走 `files:` 而不是 `<script src>`：前者不受页面 CSP 约束，也不用进 `web_accessible_resources`；
+- ⛔ `world: 'MAIN'` 不能漏。漏了默认就是 `ISOLATED`，等于又改了一遍自己那套原型 —— 第一次调试时就是这个症状：日志无报错、探针全绿、视频照播。
+
+**开关怎么从隔离世界传到主世界**：主世界没有 `chrome.storage`。改为 content script 写 `html[data-xm-no-autoplay]`，主世界 `MutationObserver` 监听该属性。默认值按「开」处理（`!== '0'`），所以注入那一刻就已经在拦，不用等设置读完。
+
+**为什么拒绝而不是假装成功**：`play()` 返回 rejected promise，错误用 `NotAllowedError` —— 这正是浏览器自动播放策略自己的错误类型，X 必然已经 catch（否则静音策略一开它自己就崩）。X 会照原生逻辑停在首帧、显示播放键。若返回 resolved，X 以为在播、UI 显示暂停键，用户点一下反而变成「暂停」，更别扭。
+
+**GIF 怎么认**：只认 `loop === true`。X 的动图是无声 mp4 + loop，普通视频不 loop。代价是「循环播放的短视频」会被当成 GIF 放过 —— 用户选的就是「只禁视频」，宁可漏。
+
+**放行条件**：`pointerdown` 落在视频区（`video` 本身、`videoPlayer` / `videoComponent` 容器、或往上 6 层内子树含 `video` 的祖先）时记一个 2 秒窗口，窗口内的 `play()` 直接放行。播放按钮是贴在 video 之上的兄弟层、不是它的后代，所以不能只判 `closest('video')`。
+
+**两条兜底**（主世界那份里）：`play` 事件捕获阶段暂停（兜住 `autoplay` 属性起播），以及新插入的 `video` 摘掉 `autoplay`（免得亮一帧再停）。隔离世界也留了一条 `play` 事件兜底 —— 万一注入失败，至少画面不会一直动。
+
+**验证**：用 playwright 起独立 Chromium 加载 `dist/`，把 x.com 的文档请求用 `route.fulfill` 换成本地桩页面（不必登录），在页面主世界直接探：
+
+| 场景 | 结果 |
+|---|---|
+| 普通视频、无手势 | `NotAllowedError: Autoplay disabled by X MARGIN` ✓ |
+| `loop=true`（GIF） | 走原生实现 ✓ |
+| 点视频本身后 | 放行 ✓ |
+| 点视频容器（播放按钮位置）后 | 放行 ✓ |
+| 开关置 `data-xm-no-autoplay="0"` | 放行 ✓ |
+
+补丁是否装上也直接查过：`HTMLMediaElement.prototype.play.toString()` 里含标记字符串才算注入成功 —— 只看「没报错」会漏掉 world 写错这种情形。
+
+**权限变更**：新增 `scripting`。从 `chrome://extensions` 重新加载时若提示新增权限，同意即可；不加这条权限注入会静默失败。
 
 
 ### 背景怎么铺到 X 底下

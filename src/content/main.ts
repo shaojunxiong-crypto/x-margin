@@ -1,5 +1,6 @@
 import { loadSettings, onSettings, saveSettings, type Settings } from '../shared/settings';
 import { initAnchor } from './anchor';
+import { setNoAutoplay } from './autoplay';
 import { BackgroundLayer } from './bg/background';
 import { applyFlat, clearCardWrappers, markDetailReplyBox, markRelatedBar, reflowCards, resetReflowBase, resetThreadSig, setFeedFrozen } from './feed';
 import { injectFonts } from './fonts';
@@ -72,6 +73,8 @@ function sync(): void {
   applySkin(theme, s.bg.mode !== 'off', s.bg.glass, s.softText, s.layout.cardFeed);
   applyFont(s.font.choice, s.font.custom);
   applyLayout(s.layout);
+  // 拦截器在模块加载时就装好了，这里只同步开关（settings 读完可能把它关掉）
+  setNoAutoplay(s.layout.noAutoplay);
   clearCardWrappers(s.layout.cardFeed);
   resetThreadSig();
   resetReflowBase();

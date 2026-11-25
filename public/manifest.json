@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X MARGIN",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -36,7 +36,8 @@
   ],
   "permissions": [
     "storage",
-    "clipboardWrite"
+    "clipboardWrite",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -45,6 +45,23 @@ chrome.runtime.onMessage.addListener(
       reply({ ok: true });
       return;
     }
+    /**
+     * 视频自动播放拦截：真正改 `HTMLMediaElement.prototype.play` 的代码必须跑在**主世界**。
+     * 内容脚本在隔离世界，它有独立的原型链，改那边对 X 自己的 React 毫无影响。
+     * 用 scripting.executeScript 注入不受页面 CSP 约束；`files` 也不需要 web_accessible_resources。
+     * 重复注入无害：脚本内部会判断已安装、只同步一次开关。
+     */
+    if (m.type === 'xm:autoplay') {
+      const tabId = sender.tab?.id;
+      if (typeof tabId === 'number') {
+        chrome.scripting
+          // ⛔ world 必须显式写 'MAIN'：漏了它默认注入到 ISOLATED，等于又改了一遍隔离世界的原型
+          .executeScript({ target: { tabId }, world: 'MAIN', files: ['autoplay-main.js'] })
+          .catch((e: unknown) => console.warn('[x-margin] 主世界注入失败', e));
+      }
+      reply({ ok: true });
+      return;
+    }
     if (m.type !== 'xm:shot') return;
     const win = sender.tab?.windowId;
     void (async () => {

@@ -20,6 +20,21 @@ await build({
   },
 });
 
+// 主世界脚本：视频自动播放拦截。content script 在隔离世界，改原型无效，
+// 必须由后台用 chrome.scripting 注入到 X 自己的上下文里。
+await build({
+  configFile: false,
+  publicDir: false,
+  logLevel: 'warn',
+  build: {
+    outDir: 'dist',
+    emptyOutDir: false,
+    target: 'chrome110',
+    minify: !process.env.NOMIN,
+    lib: { entry: 'src/mainworld/autoplay.ts', name: 'xm_autoplay', formats: ['iife'], fileName: () => 'autoplay-main.js' },
+  },
+});
+
 // 流光（WebGPU / vgpu，约 200KB）单独打包：只有选中这款背景时才动态 import
 await build({
   configFile: false,

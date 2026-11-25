@@ -382,6 +382,9 @@ export function createPanel(opts: PanelOptions): PanelApi {
     sw(card, '隐藏浮动按钮', '右下角 Grok 与私信气泡', s.layout.hideFloats, (v) => {
       void opts.update({ layout: { ...s.layout, hideFloats: v } }).then(render);
     });
+    sw(card, '禁止视频自动播放', '进入视口的视频不再自己播，点一下才放；GIF 不受影响', s.layout.noAutoplay, (v) => {
+      void opts.update({ layout: { ...s.layout, noAutoplay: v } }).then(render);
+    });
 
     card = section('推文流');
     {

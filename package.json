@@ -12,6 +12,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
+    "doctor": "node scripts/doctor.mjs",
     "build": "tsc --noEmit && node scripts/build.mjs",
     "pack": "npm run build && cd dist && rm -f ../x-margin.zip && zip -9qrX ../x-margin.zip ."
   },

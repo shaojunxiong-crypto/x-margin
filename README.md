@@ -559,7 +559,7 @@ html.xm-flat main article div[role="link"]:has([data-testid="tweetText"]){ borde
 
 **GIF 怎么认**：只认 `loop === true`。X 的动图是无声 mp4 + loop，普通视频不 loop。代价是「循环播放的短视频」会被当成 GIF 放过 —— 用户选的就是「只禁视频」，宁可漏。
 
-**放行条件**：`pointerdown` 落在视频区（`video` 本身、`videoPlayer` / `videoComponent` 容器、或往上 6 层内子树含 `video` 的祖先）时记一个 2 秒窗口，窗口内的 `play()` 直接放行。播放按钮是贴在 video 之上的兄弟层、不是它的后代，所以不能只判 `closest('video')`。
+**放行条件**：`pointerdown` 落在视频区时记一个 2 秒窗口，窗口内的 `play()` 直接放行。判据见 0.2.20 —— 光靠 DOM 层级不够。
 
 **两条兜底**（主世界那份里）：`play` 事件捕获阶段暂停（兜住 `autoplay` 属性起播），以及新插入的 `video` 摘掉 `autoplay`（免得亮一帧再停）。隔离世界也留了一条 `play` 事件兜底 —— 万一注入失败，至少画面不会一直动。
 
@@ -576,6 +576,49 @@ html.xm-flat main article div[role="link"]:has([data-testid="tweetText"]){ borde
 补丁是否装上也直接查过：`HTMLMediaElement.prototype.play.toString()` 里含标记字符串才算注入成功 —— 只看「没报错」会漏掉 world 写错这种情形。
 
 **权限变更**：新增 `scripting`。从 `chrome://extensions` 重新加载时若提示新增权限，同意即可；不加这条权限注入会静默失败。
+
+
+### 0.2.20：真机验收抓出两个「桩测试看不见」的错
+
+0.2.19 只在本地桩页面验过（`route.fulfill` 把 x.com 换成一页假 DOM）。接上真浏览器一跑，两处都没生效。
+
+**一、自动注入整条链路是空转的。** 页面上 `play.toString()` 仍是 `function play() { [native code] }`。排查顺序：先连 service worker 看它有没有报错 —— 没有；再在 SW 里手动调一次 `executeScript({ world:'MAIN', files:['autoplay-main.js'] })` —— **成功，`results=1`**，而且页面当场就 patch 上了。
+
+所以 `scripting` 权限、`world: 'MAIN'`、产物路径全都没问题，坏的是「内容脚本发消息 → 后台注入」这条链路本身：内容脚本在 `document_start` 发消息，此刻文档还没成型，`executeScript` 打上去的补丁会随文档提交一起丢掉；后台又是**先回复再执行**，内容脚本收到成功回执就把 `asked` 锁死，不再重试。桩页面里 DOM 是同步就绪的，这个时序差根本不会出现。
+
+改法是让注入不经过消息：manifest 里直接声明一条主世界内容脚本。
+
+```json
+{ "matches": [...], "js": ["autoplay-main.js"], "run_at": "document_start", "world": "MAIN" }
+```
+
+`document_start` + `world: MAIN` 由浏览器在文档创建的第一刻直接执行，既不依赖后台是否醒着，也不会被导航冲掉。后台那条 `executeScript` 保留成冗余兜底（脚本自身有 `window.__xmNoAutoplay` 守卫，重复注入只做一次 sync）。
+
+**二、点播放按钮播不了。** 拦是拦住了，但点视频不动 —— 这比自动播放更糟。`elementFromPoint` 打出来：落点是播放按钮里的 `<path>`（SVG 三角），祖先链 `path → svg → span → button → div.z-10 → div.pointer-events-none → div.absolute → div.relative(含 video)`，**含 video 的容器在第 8 层**，而判据只往上找 6 层。
+
+单纯把 6 改成 12 是错的：那会让「点推文任意位置」都落进某条推文的视频容器，等于取消拦截。改成**坐标判据** —— 落点落在任一 `video` 的 `getBoundingClientRect()` 内就放行。播放按钮是 `absolute inset-0` 贴在视频上的浮层，坐标必然重叠，而推文空白处不会。
+
+**真机数据**（1440×900，首页 760×420 视频）：
+
+| 时刻 | paused | currentTime |
+|---|---|---|
+| 加载完 9 秒 | `true` | `0` |
+| 鼠标点击视频中心 +2s | `false` | `1.97` |
+| +4s | `false` | `4.00` |
+
+同时刻页面上另两条视频始终 `paused=true, t=0`，滚动进视口 6 秒内没动。
+
+**语义复核**（`Promise.race` 800ms，因为空 video 的原生 `play()` 永远 pending，直接 await 会挂死）：
+
+| 场景 | 结果 |
+|---|---|
+| 普通视频、无手势 | `REJECTED NotAllowedError` ✓ |
+| `loop=true`（GIF） | `PENDING`（走原生）✓ |
+| 点一下视频后 | `PENDING` ✓ |
+| 等 2.4 秒手势过期 | `REJECTED NotAllowedError` ✓ |
+| `data-xm-no-autoplay="0"` | `REJECTED AbortError`（原生报的，说明没走我们）✓ |
+
+**接口未变**：开关仍在「布局」→「禁止视频自动播放」，默认开。
 
 
 ### 背景怎么铺到 X 底下

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X MARGIN",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -10,6 +10,18 @@
   },
   "description": "重塑 x.com 的阅读体验：动态背景、字体与字号、主题与强调色、图标导航栏、去广告与去边框、右下角浮动按钮收起，以及推文一键截图。",
   "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "autoplay-main.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false,
+      "world": "MAIN"
+    },
     {
       "matches": [
         "https://x.com/*",

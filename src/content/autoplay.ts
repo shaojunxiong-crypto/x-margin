@@ -19,10 +19,18 @@ let on = true;
 let gestureAt = -1e9;
 let asked = false;
 
-function inVideoZone(t: EventTarget | null): boolean {
+/**
+ * 点在视频区里吗？与主世界那份保持一致：落点在 video 包围盒内即算。
+ * 播放按钮是贴在视频上的浮层，从 SVG 图标往上要穿 7 层 DOM 才碰到含 video 的容器。
+ */
+function inVideoZone(t: EventTarget | null, x: number, y: number): boolean {
   if (!(t instanceof Element)) return false;
   if (t.closest('video')) return true;
   if (t.closest('[data-testid="videoPlayer"],[data-testid="videoComponent"]')) return true;
+  for (const v of document.querySelectorAll('video')) {
+    const r = v.getBoundingClientRect();
+    if (r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+  }
   let el: Element | null = t;
   for (let i = 0; i < 6 && el; i++) {
     if (el.querySelector('video')) return true;
@@ -95,7 +103,7 @@ export function installNoAutoplay(): void {
   document.addEventListener(
     'pointerdown',
     (e) => {
-      if (on && inVideoZone(e.target)) gestureAt = performance.now();
+      if (on && inVideoZone(e.target, e.clientX, e.clientY)) gestureAt = performance.now();
     },
     true,
   );

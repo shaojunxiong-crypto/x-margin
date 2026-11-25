@@ -17,11 +17,21 @@ const GESTURE_MS = 2000;
 let on = document.documentElement?.dataset.xmNoAutoplay !== '0';
 let gestureAt = -1e9;
 
-function inVideoZone(t: EventTarget | null): boolean {
+/**
+ * 点在视频区里吗？判据三条，从准到糙：
+ *   ① 落点直接是 video 或它的后代；
+ *   ② 落点在某条 video 的**包围盒**内 —— X 的播放按钮是贴在视频上的浮层，
+ *      实测从 SVG 图标往上要穿 7 层才碰到含 video 的容器，靠层级一定漏；
+ *   ③ 兜底：往上 6 层里子树含 video（窄内容，避免把「点推文任意位置」也算进来）。
+ */
+function inVideoZone(t: EventTarget | null, x: number, y: number): boolean {
   if (!(t instanceof Element)) return false;
   if (t.closest('video')) return true;
   if (t.closest('[data-testid="videoPlayer"],[data-testid="videoComponent"]')) return true;
-  // 播放按钮多是贴在 video 之上的兄弟层，不是它的后代：往上找「子树里有 video」的容器
+  for (const v of document.querySelectorAll('video')) {
+    const r = v.getBoundingClientRect();
+    if (r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+  }
   let el: Element | null = t;
   for (let i = 0; i < 6 && el; i++) {
     if (el.querySelector('video')) return true;
@@ -89,7 +99,7 @@ if (!(window as unknown as Record<string, unknown>).__xmNoAutoplay) {
   document.addEventListener(
     'pointerdown',
     (e) => {
-      if (on && inVideoZone(e.target)) gestureAt = performance.now();
+      if (on && inVideoZone(e.target, e.clientX, e.clientY)) gestureAt = performance.now();
     },
     true,
   );

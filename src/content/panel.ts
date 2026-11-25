@@ -373,7 +373,7 @@ export function createPanel(opts: PanelOptions): PanelApi {
     sw(card, '图标导航栏', '左侧导航压成竖排图标，贴边固定', s.layout.railNav, (v) => {
       void opts.update({ layout: { ...s.layout, railNav: v } }).then(render);
     });
-    sw(card, '隐藏发推入口', '顶部发推面板和发帖按钮一起收掉', s.layout.hideCompose, (v) => {
+    sw(card, '隐藏发推入口', '顶部发推面板、发帖按钮，以及详情页底部的回复输入框', s.layout.hideCompose, (v) => {
       void opts.update({ layout: { ...s.layout, hideCompose: v } }).then(render);
     });
     sw(card, '隐藏滚动条', '去掉窗口滚动条，弹窗内保留', s.layout.noScrollbar, (v) => {

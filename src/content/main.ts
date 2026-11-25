@@ -1,7 +1,7 @@
 import { loadSettings, onSettings, saveSettings, type Settings } from '../shared/settings';
 import { initAnchor } from './anchor';
 import { BackgroundLayer } from './bg/background';
-import { applyFlat, clearCardWrappers, reflowCards, resetReflowBase, resetThreadSig, setFeedFrozen } from './feed';
+import { applyFlat, clearCardWrappers, markDetailReplyBox, markRelatedBar, reflowCards, resetReflowBase, resetThreadSig, setFeedFrozen } from './feed';
 import { injectFonts } from './fonts';
 import { applyLayout, markComposer, markFloats, syncWidthVar, widenInner } from './layout';
 import { markPageHead } from './pageHead';
@@ -84,6 +84,8 @@ function sync(): void {
   killPill();
   applyRail(s.layout.railNav, theme, s.layout.railHide, s.layout.hideCompose);
   markComposer(s.layout.hideCompose);
+  // 详情页回复输入区跟着同一个开关走：改设置当场生效，不用等 1.5 秒心跳
+  markDetailReplyBox(s.layout.hideCompose);
   // 齿轮按钮跟着图标栏在「栏内」与「浮动球」之间搬
   if (ui) ui.place(s.layout.railNav && document.documentElement.classList.contains('xm-rail'));
   void bg.apply(s.bg, theme);
@@ -150,6 +152,13 @@ async function seedRail(): Promise<void> {
 function watch(bindWide: () => void, onUnfreeze: () => void): void {
   let lastThemeCheck = 0;
   let lastWideCheck = 0;
+  /**
+   * 详情页「相关 / 查看引用」横条是**晚到**的：主帖先渲染，横条常在几秒后才插进来。
+   * 只靠主栏 childList 的 scan 会错过那一刻（插完再无变动 ⇒ 再也不扫），
+   * 表现就是同一篇帖子时而藏得住时而藏不住。这里给它一条独立节拍兜底。
+   * 内部有 800ms 限频且只扫前 6 格，稳态开销可忽略。
+   */
+  let lastRelatedCheck = 0;
   let lastWideBind = 0;
   let lastProbeCheck = 0;
   let scanTimer = 0;
@@ -290,6 +299,12 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
     if (reflowDue && settings.layout.cardFeed) {
       reflowDue = false;
       reflowCards();
+    }
+    if (!isScrolling() && now - lastRelatedCheck > 1500) {
+      lastRelatedCheck = now;
+      if (settings.layout.cardFeed) markRelatedBar();
+      // 关掉时必须也能进来清标记，所以不套 cardFeed 条件（内部自己判）
+      markDetailReplyBox(settings.layout.hideCompose);
     }
     if (settings.layout.feedWidth !== 600 && now - lastWideCheck > 4000) {
       lastWideCheck = now;

@@ -597,6 +597,22 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"][data-xm-
   display:none!important;
 }
 
+/* 详情页主帖下方那条「相关⌄ ……………… 查看引用›」横条，以及紧跟其后「只剩一个头像」的相关项：
+   整体去掉（2026-11-25，用户要求）。标记由 feed.ts 的 markRelatedBar 按**文字**打 ——
+   这块的类名是 X 构建期哈希，且只在 /status/ 页出现。
+   ⛔ 两块都是实体内容，display:none 之后格高真的变小，必须由标记函数补 reflowCards。 */
+html.xm-card main [data-xm-related]{
+  display:none!important;
+}
+
+/* 详情页主帖末尾那块「只剩头像 + 发布你的回复」的输入区：随「隐藏发推入口」一起收掉
+   （2026-11-25，用户裁定）。它本身是 form，能正常回复，所以要可撤销、且只在
+   hideCompose 开启时由 markDetailReplyBox 打标；关掉开关立刻还回来。
+   ⛔ 弹窗里的回复器（role=dialog / portal 挂 body）不在主帖格子里，不受这条影响。 */
+html.xm-card main [data-xm-replybox]{
+  display:none!important;
+}
+
 /* ── 直角化：媒体与引用卡见文件上方 QUOTE_CSS 的「媒体直角化」段 ──
    0.2.0 这里曾有三条较弱的新版规则（只认直接子 img / video，漏掉外层 28.8px 的 a），
    0.2.5 已由上面那组 :has(img[src*="pbs.twimg.com/media"]) / :has(article) 取代并删除。

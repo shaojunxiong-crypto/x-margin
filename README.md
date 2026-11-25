@@ -433,6 +433,41 @@ html.xm-flat main article div[role="link"]:has([data-testid="tweetText"]){ borde
 
 ⛔ 探针不改任何 DOM 与样式。它红了之后的处置方式在 `docs/REGISTRY.md` 第三节：先归因（找不到 / 量不对 / 盖不住），再按矩阵定兜底强度。
 
+### 0.2.17：详情页「相关⌄ / 查看引用›」横条去掉
+
+用户报：详情页主帖下方有一行「相关⌄」（左）＋「查看引用›」（右），再往下是一块只剩头像的白条，三样都要去掉。
+
+**真机实测后，结论与前两版草稿都不一样，三件事分开说。**
+
+**一、横条（已去掉）。** 真实结构是：
+
+```html
+<div class="mt-2 flex items-center justify-between gap-4">      ← 横条，h=16
+  <button aria-label="排序回复：相关"><span>相关<svg/></span></button>
+  <a href="/<user>/status/<id>/quotes"><span>查看引用<svg/></span></a>
+</div>
+```
+
+第一版判据「叶子文字恰好等于『查看引用』」**整条落空**：文字在 `span` 里，span 里还套着箭头 `svg`，所以那个 span 的 `childElementCount` 是 1，不是叶子。改为**路由锚点优先**：直接找 `a[href*="/quotes"]`（X 改文案不改路由），再用「同一层文字 ≤40 字、同时含相关/Related 与查看引用/View quotes、盒高 ≤64」确认它就是那条横条。旧的字面判据保留作兜底，路由变了还有第二条腿。
+
+**二、横条是晚到的，必须有独立节拍。** 主帖先渲染，横条常在几秒后才插进来；此前只靠主栏 `childList` 的 `scan()` 补扫，插完那一下若错过，DOM 不再变动就再也不扫 —— 实测同一篇帖子时而藏住、时而露出。现在在 300ms 心跳里给它一条 1.5 秒的独立节拍（内部还有 800ms 限频，只扫前 6 格）。
+
+**三、别用 `rect > 0` 过滤。** 这是本轮最隐蔽的一个坑：横条一旦被 `display:none` 藏掉，`getBoundingClientRect()` 立刻归零，下一轮扫描就判成「不存在」并把标记摘回去，再下一轮又判成存在、重新打上 —— 逐秒观测看到的是每 3 秒可见/隐藏来回翻转。判据改成「节点仍连接 + 文案仍在」，不看尺寸。
+
+**四、那块「只剩头像的白条」不是空块，是回复输入框 —— 按「隐藏发推入口」一起收掉。** 实测横条的下一个同级是 `div.hidden.flex-col.sm:flex > form`，里面是 `@你的账号` 头像 + 折叠态的「回复 @某人」。它本身能正常回复，所以不能无条件删；用户裁定「在详情页也藏掉」，实现为 `markDetailReplyBox(hide)`，只跟随 `hideCompose` 开关：
+
+- 只在 `/status/`、卡片模式、且 `hideCompose` 开启时打 `data-xm-replybox`；关掉开关**无条件清标记**（不依赖节点是否还命中，否则会一直隐身到刷新）；
+- 未激活的折叠态**没有** `contenteditable`（里面是个 `inert` 的 `grid-rows-[0fr]`），所以判据是「`form` 文字匹配 `回复 @xxx` / `Reply @xxx` 且 ≤30 字」**或**「`form` 内有 `contenteditable`」，两种状态都认；
+- 定位后**再上提一层**，把上面那条 `border-divider` 与 gap 一起带走，否则会留一道 20px 空白；
+- 弹窗回复器挂在 `body` 的 portal 上、不在主帖格子里，不受影响。
+
+用户截图里它只显示头像（没有「发布你的回复」字样），是占位文字当时还没渲染，不是另一块东西。
+
+**为什么不碰 class**：这一块的类名是构建期哈希，且只在 `/status/` 页出现，猜结构必错。文字 + 路由是唯一稳的锚点。
+
+**验证**：逐秒观测 17 秒，标记后 `hrefH` 恒为 0，无翻转；`main form` 仍可见（h=64），回复框未被误伤；探针 `xmProbe=ok`。
+
+
 ### 背景怎么铺到 X 底下
 
 `.xm-bg` 是 `position: fixed; inset: 0; z-index: -1` 的一层，塞进 `body` 最前面。z-index 为负才会落在 `#react-root` 的所有内容之下；`html`/`body`/`#react-root` 的底色同时改成透明，否则整页底色会把画布糊死。

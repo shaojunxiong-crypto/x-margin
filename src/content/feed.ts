@@ -268,6 +268,167 @@ export function markMoreSection(): void {
   }
 }
 
+/**
+ * 推文详情页主帖下方那条「相关⌄ ………… 查看引用›」横条。
+ * 用户要求整体去掉（2026-11-25）。
+ *
+ * ⛔ 锚点用**路由 + 文字**，不用 class：这一块的类名是 X 构建期哈希，且只在 /status/ 页出现。
+ * ⛔ 必须两个词落在同一行才算。「相关」在正文里随处可见，「查看引用」也可能只是单个按钮；
+ *    正文里恰好提到这两个词时，那一段文字的高度远大于一行，判据自然落空。
+ * ⛔ 不能用 rect>0 过滤：藏掉之后 rect 归零，下一轮就判成「不存在」并摘标记 —— 会隔轮翻转。
+ * ⛔ 紧跟其后的那块是**回复输入框**（form + 头像 + 「发布你的回复」），不是空块，绝不能删；
+ *    相邻候选一律过 form/textarea/[contenteditable] 护栏。
+ * ⛔ 每轮重判、不成立就摘；高度归零后补 reflowCards —— 格高变了，后面每条的 translateY 要重算。
+ */
+const RELATED_ATTR = 'xmRelated';
+const RELATED_QUOTE_RE = /^(查看引用|查看引用的推文|View quotes?)$/i;
+const RELATED_ANY_RE = /查看引用|View quotes?/i;
+let lastRelatedScan = -1e9;
+/** 上一轮标记过的节点：虚拟列表会复用节点，标记必须能跟着判据一起摘掉 */
+let relatedHits: HTMLElement[] = [];
+
+/** 去掉尾部可能被当成文字的箭头（Chevron 也可能是 span 里的 ›） */
+const tidy = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/[\s›»>»›<‹]+$/, '');
+
+/** 这一层像不像那条横条：文字很短、同时含两个词、只占一行高 */
+function isRelatedBarRow(el: HTMLElement): boolean {
+  const t = tidy(el.textContent || '');
+  if (!t || t.length > 40) return false;
+  if (!RELATED_ANY_RE.test(t)) return false;
+  if (!/(相关|相關|Related)/i.test(t)) return false;
+  return el.getBoundingClientRect().height <= 64;
+}
+
+export function markRelatedBar(): void {
+  const col = column();
+  if (!col) return;
+  // 这块只在详情页出现，别的路由连扫都不必扫
+  if (!location.pathname.includes('/status/')) return;
+  const now = performance.now();
+  if (now - lastRelatedScan < 800) return;
+  lastRelatedScan = now;
+  const card = document.documentElement.classList.contains('xm-card');
+
+  const hits: HTMLElement[] = [];
+  if (card) {
+    // 它贴着主帖，最多看前 6 个格子：整列遍历在长回复串上太贵
+    for (const cell of feedCells(col).slice(0, 6)) {
+      // 首选锚点：/quotes 链接（X 改文案不改路由）。文字在 span 里还带 svg，
+      // 早先「叶子节点 childElementCount===0」的判据会整条落空，改为路由 + 文案双认。
+      // ⛔ 不能再用 rect>0 过滤：这一条一旦被 display:none 藏掉，rect 立刻归零，
+      //    下一轮就判成「不存在」并把标记摘回去 —— 实测每 3 秒可见/隐藏来回翻转。
+      //    节点仍然连接、文案仍在，就说明还是它。
+      const byHref = [...cell.querySelectorAll<HTMLElement>('a[href*="/quotes"]')].filter(
+        (e) => RELATED_ANY_RE.test(tidy(e.textContent || '')),
+      );
+      // 兜底：路由变了但文案还在时，仍从纯文字叶子往上找
+      const byText = [...cell.querySelectorAll<HTMLElement>('div,span,a,button')].filter(
+        (e) => e.childElementCount === 0 && RELATED_QUOTE_RE.test(tidy(e.textContent || '')),
+      );
+      const quotes = byHref.length ? byHref : byText;
+      for (const leaf of quotes) {
+        let bar: HTMLElement | null = leaf;
+        // 往上最多四级：叶子 → 行 → 行内块 → 容器
+        for (let i = 0; i < 4 && bar; i++) {
+          if (isRelatedBarRow(bar)) break;
+          bar = bar.parentElement;
+        }
+        if (!bar || !isRelatedBarRow(bar) || hits.includes(bar)) continue;
+        hits.push(bar);
+        // ⛔ 紧跟其后的那块是回复输入框，不在这里处理：它由 markDetailReplyBox 单独
+        //    按「隐藏发推入口」开关收放，见下方。混在一起会出现「藏了又露」的两套节拍。
+      }
+    }
+  }
+
+  let touched = 0;
+  for (const el of relatedHits) {
+    if (hits.includes(el) || !el.isConnected) continue;
+    delete el.dataset[RELATED_ATTR];
+    touched++;
+  }
+  for (const el of hits) {
+    if (el.dataset[RELATED_ATTR] === '1') continue;
+    el.dataset[RELATED_ATTR] = '1';
+    touched++;
+  }
+  relatedHits = hits;
+  // 藏掉的是实体内容，格高真的变了：不补这一下后面几条会叠在一起
+  if (touched && card) requestAnimationFrame(() => reflowCards());
+}
+
+/**
+ * 详情页主帖末尾那块回复输入区：`form > 头像 + contenteditable + 「发布你的回复」`。
+ * 用户裁定随「隐藏发推入口」一起收掉（2026-11-25）——它本来就不想要发帖入口。
+ *
+ * ⛔ 只在 `hideCompose` 开着时藏，关掉立刻还回来（关掉的分支必须**无条件**清标记，
+ *    否则旧节点会带着标记一直隐身，直到整页刷新）。
+ * ⛔ 只认「主帖格子里、有 form、form 内有 contenteditable、整块高 ≤ 220」的祖先：
+ *    弹窗里的回复器挂在 body 的 portal 上，不在格子内，天然不受影响。
+ * ⛔ 判据全程不看 rect>0 做过滤条件 —— 藏起来之后 rect 归零，会隔轮翻转（同 markRelatedBar）。
+ */
+const REPLYBOX_ATTR = 'xmReplybox';
+let replyHits: HTMLElement[] = [];
+
+export function markDetailReplyBox(hide: boolean): void {
+  const clear = (): void => {
+    // 缓存之外再兜一次 DOM：X 重渲染会让 replyHits 里的节点失联，
+    // 只按缓存清会漏掉仍然挂着属性的新节点 —— 表现就是「关了开关还是藏着」。
+    document.querySelectorAll<HTMLElement>('[data-xm-replybox]').forEach((el) => el.removeAttribute(REPLYBOX_ATTR));
+    replyHits = [];
+  };
+  const html = document.documentElement;
+  if (!hide || !html.classList.contains('xm-card') || !location.pathname.includes('/status/')) {
+    clear();
+    html.dataset.xmRb = 'clear';
+    return;
+  }
+  const col = column();
+  if (!col) return;
+
+  const hits: HTMLElement[] = [];
+  for (const cell of feedCells(col).slice(0, 3)) {
+    for (const form of cell.querySelectorAll('form')) {
+      // 两种状态都要认：未激活是「回复 @user」的折叠占位（没有 contenteditable，
+      // 里面是一个 inert 的 grid-rows-[0fr]），激活后才会挂出编辑器。
+      const t = tidy(form.textContent || '');
+      const folded = /^(回复|Reply)\s*@[\w.]+/i.test(t) && t.length <= 30;
+      if (!folded && !form.querySelector('[contenteditable]')) continue;
+      if (form.querySelector('article')) continue;
+      // 从 form 往上找承载整块的那一层（含自己的头像）
+      let box: HTMLElement | null = form.parentElement;
+      for (let i = 0; i < 3 && box; i++) {
+        if (box.querySelector('img[src*="profile_images"]')) break;
+        box = box.parentElement;
+      }
+      // 再上提一层：把上面那条 border-divider 和 gap 一起带走，否则会留一道 20px 空白
+      const up = box?.parentElement;
+      if (up instanceof HTMLElement && !up.querySelector('article') && up.getBoundingClientRect().height <= 160) {
+        box = up;
+      }
+      if (!box || hits.includes(box)) continue;
+      if (box.querySelector('article')) continue;
+      if (box.getBoundingClientRect().height > 220) continue;
+      hits.push(box);
+    }
+  }
+
+  let touched = 0;
+  for (const el of replyHits) {
+    if (hits.includes(el) || !el.isConnected) continue;
+    delete el.dataset[REPLYBOX_ATTR];
+    touched++;
+  }
+  for (const el of hits) {
+    if (el.dataset[REPLYBOX_ATTR] === '1') continue;
+    el.dataset[REPLYBOX_ATTR] = '1';
+    touched++;
+  }
+  replyHits = hits;
+  html.dataset.xmRb = 'on:' + hits.length;
+  if (touched) requestAnimationFrame(() => reflowCards());
+}
+
 /** 线程扫描的限频时间戳（applyFlat 会被悬停、心跳反复调用） */
 let lastThreadScan = -1e9;
 /** 上一次「已采纳」的拓扑签名：cell 数 + 总高度。没变就说明分组不会变，不必重量。 */
@@ -524,6 +685,12 @@ export function applyFlat(on: boolean): void {
     document.querySelectorAll<HTMLElement>('[data-xm-more-head]').forEach((el) => el.removeAttribute('data-xm-more-head'));
     // 「显示可能的垃圾信息」的隐藏标记同理，关掉卡片就还回来
     document.querySelectorAll<HTMLElement>('[data-xm-spam-note]').forEach((el) => el.removeAttribute('data-xm-spam-note'));
+    // 详情页「相关 / 查看引用」横条与头像块同理；缓存也要清，否则下次开卡片会把旧节点当成已标记
+    document.querySelectorAll<HTMLElement>('[data-xm-related]').forEach((el) => el.removeAttribute('data-xm-related'));
+    relatedHits = [];
+    // 详情页回复输入区（随「隐藏发推入口」收放）：关掉卡片模式必须还回来
+    document.querySelectorAll<HTMLElement>('[data-xm-replybox]').forEach((el) => el.removeAttribute('data-xm-replybox'));
+    replyHits = [];
     for (const [el, prev] of flatLines) {
       if (!el.isConnected) continue;
       if (prev) el.style.setProperty('border-bottom', prev);
@@ -542,6 +709,8 @@ export function applyFlat(on: boolean): void {
   markMoreSection();
   // 0.5) 「显示可能的垃圾信息」：整格隐藏，高度归零后才需要重排（函数内部已处理）
   markSpamNote();
+  // 0.6) 详情页「相关⌄ / 查看引用›」横条与它下面那个孤零零的头像块：整体去掉（同上，内部已补重排）
+  markRelatedBar();
   // 只取最外层推文：引用推文里还有一层 article，不是独立的一条
   const arts = feedTweets(col);
 

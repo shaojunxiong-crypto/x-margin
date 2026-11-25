@@ -73,7 +73,22 @@ html.xm-shotting,html.xm-shotting *{scroll-behavior:auto!important}
 .xm-shot-body{flex:1;min-height:0;overflow:auto;background:rgba(127,127,127,.06);padding:10px 10px 0}
 .xm-shot-body img{display:block;margin:0 auto;max-width:100%;max-height:calc(90vh - 122px);
   width:auto;height:auto;border-radius:0}
-.xm-shot-ft{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 12px 12px;flex:none}
+.xm-shot-ft{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px 12px;flex:none}
+.xm-shot-ft-r{display:flex;align-items:center;gap:8px}
+/* 马赛克开关：默认关。勾上就把作者行（含引用推文里的）压成像素块 */
+.xm-shot-opt{display:flex;align-items:center;gap:7px;user-select:none;
+  font:500 12px/1 inherit;color:var(--xm-ui-sub,#8b98a5);transition:color .12s ease}
+.xm-shot-opt:hover{color:var(--xm-ui-fg,#e7e9ea)}
+/* ⛔ 不用 <label> 包 input：Chromium 会把 input 的 click 再经 label 的激活行为转发一次，
+   等于连点两下，勾选后立刻又被取消。文字自己接管点击。 */
+.xm-shot-opt-t{cursor:pointer}
+.xm-shot-cb{appearance:none;-webkit-appearance:none;flex:none;position:relative;margin:0;
+  width:14px;height:14px;border-radius:0;border:1px solid var(--xm-ui-line,rgba(255,255,255,.3));
+  background:transparent;cursor:pointer;transition:background .12s ease,border-color .12s ease}
+.xm-shot-cb:checked{background-color:var(--xm-acc,#1d9bf0);border-color:var(--xm-acc,#1d9bf0);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.3l2.5 2.5L9.8 3.2' fill='none' stroke='%23fff' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:center;background-size:11px 11px}
+.xm-shot-opt input:focus-visible{outline:2px solid var(--xm-acc,#1d9bf0);outline-offset:2px}
 .xm-shot-btn{height:32px;padding:0 14px;border-radius:0;border:1px solid var(--xm-ui-line,rgba(255,255,255,.14));
   background:var(--xm-ui-card,rgba(255,255,255,.05));color:var(--xm-ui-fg,#e7e9ea);
   font:500 12.5px/1 inherit;cursor:pointer;transition:background .14s ease,border-color .14s ease}
@@ -105,6 +120,25 @@ let lastMount = 0;
 let blobUrl = '';
 let blob: Blob | null = null;
 let fileName = 'x.png';
+
+/* ── 马赛克作者信息 ──
+   预览层里勾一下，就对「原图」重新出一张打了马赛克的：
+   头像 + 昵称 + @handle + 时间 + 徽章，整条作者行；引用推文（嵌套 article）一起。 */
+const MOSAIC_KEY = 'xm:shot-mosaic';
+/** 马赛克块边长的基准值（CSS 像素，会乘设备倍率）。9px 时 40px 头像只剩 4×4 格，认不出人 */
+const MOSAIC_BLOCK = 9;
+/** 原图（未打码）与作者行坐标，切换勾选时都从这里重画，不重新截图 */
+let rawCanvas: HTMLCanvasElement | null = null;
+let bands: Band[] = [];
+let shotScale = 1;
+let shotChunks = 1;
+/** 每次出图递增，用于丢弃「切得太快」的旧结果 */
+let shotToken = 0;
+let plainName = 'x.png';
+let maskedName = 'tweet.png';
+let mosaicOn = (() => {
+  try { return localStorage.getItem(MOSAIC_KEY) === '1'; } catch { return false; }
+})();
 
 /**
  * 一次 0.16s 的淡入淡出：留给 CSS 一帧，再等图片解码。
@@ -377,14 +411,151 @@ function hideTopOverlays(): () => void {
   };
 }
 
-function nameFor(art: HTMLElement): string {
-  const href = art.querySelector('[data-testid="User-Name"] a[href^="/"]')?.getAttribute('href') || '';
-  const handle = href.split('/')[1] || 'x';
-  const id = (location.pathname.match(/status\/(\d+)/) || [])[1] || '';
+function namesFor(art: HTMLElement): { plain: string; masked: string } {
+  /**
+   * ⛔ 旧实现取 `[data-testid="User-Name"] a[href^="/"]`。X 2026-11 的改版把这套 testid 整片删了，
+   *    于是 handle 恒为空、文件名永远落到兜底的 `x-…`。改从头像图的 alt（就是 `@handle`）拿，
+   *    再退到文章里第一个站内链接的路径段。
+   */
+  const av = art.querySelector<HTMLImageElement>('img[src*="/profile_images/"]');
+  const fromAlt = (av?.alt || '').replace(/^@/, '').trim();
+  const fromHref = (art.querySelector('a[href^="/"]')?.getAttribute('href') || '').split('/')[1] || '';
+  const handle = (fromAlt || fromHref || 'x').replace(/[^\w.]/g, '') || 'x';
+  // 首页没有 /status/ 路径，但文章里一定有指向自己的 status 链接
+  const id =
+    (location.pathname.match(/status\/(\d+)/) || [])[1]
+    || (art.querySelector('a[href*="/status/"]')?.getAttribute('href') || '').match(/status\/(\d+)/)?.[1]
+    || '';
   const d = new Date();
   const p = (n: number): string => String(n).padStart(2, '0');
   const ts = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-  return `${handle}${id ? `-${id}` : ''}-${ts}.png`.replace(/[^\w.@-]+/g, '_');
+  const tail = `${id ? `-${id}` : ''}-${ts}.png`;
+  return {
+    plain: `${handle}${tail}`.replace(/[^\w.@-]+/g, '_'),
+    // 打了码还叫 @handle 就白打：文件名也是会泄漏的那一半
+    masked: `tweet${tail}`.replace(/[^\w.@-]+/g, '_'),
+  };
+}
+
+/* ────────────────────────── 作者行马赛克 ────────────────────────── */
+
+/** 一条待打码的横带，坐标是「相对文章左上角」的 CSS 像素 */
+interface Band { x: number; y: number; w: number; h: number }
+
+/**
+ * 收集这条推文里所有「作者行」的横带。含引用推文 —— 它是嵌套的 article，
+ * querySelectorAll 天然会一起命中，被引用者同样要抹。
+ *
+ * 锚点：`img[src*="/profile_images/"]` 加上「文本恰为 @handle 的叶子」。
+ * ⛔ 不用 `data-testid="User-Name"`：X 2026-11 改版已删（实测首页与详情页都取不到）。
+ * ⛔ 同一条 article 里会有 0×0 的隐藏头像副本，必须按尺寸过滤，否则会算出一条零宽带。
+ * ⛔ 右边一律推到所属 article 的右缘：时间戳常常在 handle 右侧另起一个 span，
+ *    只抹到文字右缘会正好漏掉它。
+ */
+function authorBands(art: HTMLElement): Band[] {
+  const base = art.getBoundingClientRect();
+  // @handle 叶子全集（一条推文里通常 1–3 个），用来定作者行的下边界
+  const leaves = [...art.querySelectorAll<HTMLElement>('span,a,div')].filter(
+    (e) => e.childElementCount === 0 && /^@[\w.]{2,20}$/.test((e.textContent || '').trim()),
+  );
+  const out: Band[] = [];
+  for (const img of art.querySelectorAll<HTMLImageElement>('img[src*="/profile_images/"]')) {
+    const r = img.getBoundingClientRect();
+    if (r.width < 12 || r.height < 12) continue;
+    const owner = (img.closest('article') ?? art).getBoundingClientRect();
+    let top = r.top - 4;
+    let bottom = r.bottom + 4;
+    // 同一条作者行上的 @handle：按垂直中心距离取最近的那个
+    let near: DOMRect | null = null;
+    let nearD = Infinity;
+    for (const leaf of leaves) {
+      const lr = leaf.getBoundingClientRect();
+      const d = Math.abs((lr.top + lr.bottom - r.top - r.bottom) / 2);
+      if (d < nearD) { nearD = d; near = lr; }
+    }
+    if (near && nearD < 48) {
+      top = Math.min(top, near.top - 4);
+      bottom = Math.max(bottom, near.bottom + 4);
+    }
+    const left = r.left - base.left - 4;
+    const right = owner.right - base.left - 2;
+    if (right - left < 8) continue;
+    out.push({ x: left, y: top - base.top, w: right - left, h: bottom - top });
+  }
+  return out;
+}
+
+/** 在 out 上把一条带子压成马赛克：先缩到 1/block 再关掉插值放大回去 */
+function mosaicBand(
+  ctx: CanvasRenderingContext2D,
+  src: HTMLCanvasElement,
+  b: Band,
+  scale: number,
+): void {
+  let x = Math.round(b.x * scale);
+  let y = Math.round(b.y * scale);
+  let w = Math.round(b.w * scale);
+  let h = Math.round(b.h * scale);
+  // 长推文按段拼接时，带子可能越过画布边缘
+  if (x < 0) { w += x; x = 0; }
+  if (y < 0) { h += y; y = 0; }
+  w = Math.min(w, src.width - x);
+  h = Math.min(h, src.height - y);
+  if (w < 6 || h < 6) return;
+  const bw = Math.max(1, Math.round(w / (MOSAIC_BLOCK * scale)));
+  const bh = Math.max(1, Math.round(h / (MOSAIC_BLOCK * scale)));
+  const tmp = document.createElement('canvas');
+  tmp.width = bw;
+  tmp.height = bh;
+  const t = tmp.getContext('2d');
+  if (!t) return;
+  t.imageSmoothingEnabled = true;
+  t.imageSmoothingQuality = 'high';
+  t.drawImage(src, x, y, w, h, 0, 0, bw, bh);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tmp, 0, 0, bw, bh, x, y, w, h);
+  ctx.restore();
+}
+
+/** 从原图复制一份，按需打码。永远不改 rawCanvas，取消勾选才能原样还回来 */
+function compose(withMosaic: boolean): HTMLCanvasElement | null {
+  if (!rawCanvas) return null;
+  const out = document.createElement('canvas');
+  out.width = rawCanvas.width;
+  out.height = rawCanvas.height;
+  const ctx = out.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(rawCanvas, 0, 0);
+  if (withMosaic) for (const b of bands) mosaicBand(ctx, rawCanvas, b, shotScale);
+  return out;
+}
+
+/**
+ * 出图并刷新预览。切换勾选时走这里，不重新截图。
+ * ⛔ 先把新图 decode 完再换 src，否则预览会白闪一下。
+ */
+async function publish(withMosaic: boolean): Promise<void> {
+  const token = ++shotToken;
+  const cv = compose(withMosaic);
+  if (!cv) return;
+  const b = await new Promise<Blob | null>((res) => cv.toBlob(res, 'image/png'));
+  if (!b) { tip('PNG 编码失败', 2600); return; }
+  const url = URL.createObjectURL(b);
+  const probe = new Image();
+  probe.src = url;
+  await probe.decode().catch(() => {});
+  if (token !== shotToken) { URL.revokeObjectURL(url); return; }
+  ensureOverlay();
+  if (ov) ov.style.setProperty('--xm-shot-ink', inkFor());
+  if (blobUrl) URL.revokeObjectURL(blobUrl);
+  blob = b;
+  blobUrl = url;
+  if (ovImg) ovImg.src = url;
+  fileName = withMosaic ? maskedName : plainName;
+  if (ovSub) ovSub.textContent = `${cv.width} × ${cv.height} px · ${Math.round(b.size / 1024)} KB${shotChunks > 1 ? ` · ${shotChunks} 段拼接` : ''}`;
+  if (ov) ov.dataset.open = '1';
+  document.documentElement.dataset.xmShotMosaic = withMosaic ? '1' : '0';
 }
 
 async function shoot(art: HTMLElement): Promise<void> {
@@ -474,11 +645,18 @@ async function shoot(art: HTMLElement): Promise<void> {
     }
 
     if (!canvas) throw new Error('没有截到内容');
-    const blobOut = await new Promise<Blob | null>((res) => (canvas as HTMLCanvasElement).toBlob(res, 'image/png'));
-    if (!blobOut) throw new Error('PNG 编码失败');
 
-    fileName = nameFor(art);
-    showPreview(blobOut, canvas.width, canvas.height, chunks);
+    // 原图留一份：勾选/取消马赛克都从它重新出图，不重新截图
+    rawCanvas = canvas;
+    bands = authorBands(art);
+    shotScale = scale;
+    shotChunks = chunks;
+    const nm = namesFor(art);
+    plainName = nm.plain;
+    maskedName = nm.masked;
+    html.dataset.xmShotBands = String(bands.length);
+
+    await publish(mosaicOn);
     html.dataset.xmShotLast = `${canvas.width}x${canvas.height}@${chunks}`;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -515,15 +693,40 @@ function ensureOverlay(): void {
       </div>
       <div class="xm-shot-body"><img alt="推文截图" /></div>
       <div class="xm-shot-ft">
-        <button type="button" class="xm-shot-btn" data-a="close">关闭</button>
-        <button type="button" class="xm-shot-btn" data-a="copy">复制图片</button>
-        <button type="button" class="xm-shot-btn" data-a="dl">下载 PNG</button>
+        <div class="xm-shot-opt" title="盖掉头像、昵称、@handle 与时间；引用推文里的也会一起盖">
+          <input type="checkbox" class="xm-shot-cb" data-a="mosaic" />
+          <span class="xm-shot-opt-t">马赛克作者信息</span>
+        </div>
+        <div class="xm-shot-ft-r">
+          <button type="button" class="xm-shot-btn" data-a="close">关闭</button>
+          <button type="button" class="xm-shot-btn" data-a="copy">复制图片</button>
+          <button type="button" class="xm-shot-btn" data-a="dl">下载 PNG</button>
+        </div>
       </div>
     </div>`;
   ovImg = el.querySelector<HTMLImageElement>('.xm-shot-body img');
   ovSub = el.querySelector<HTMLElement>('.xm-shot-hd-t i');
+  const cb = el.querySelector<HTMLInputElement>('.xm-shot-cb');
+  if (cb) cb.checked = mosaicOn;
+  el.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement) || t.dataset.a !== 'mosaic') return;
+    mosaicOn = t.checked;
+    // 记住上次选择：连续发图时不用每张都点（隐私模式下 localStorage 会抛，忽略即可）
+    try { localStorage.setItem(MOSAIC_KEY, mosaicOn ? '1' : '0'); } catch { /* noop */ }
+    void publish(mosaicOn);
+  });
   el.addEventListener('click', (ev) => {
     const t = ev.target;
+    // 点文字等于点方框（label 的隐式转发会 double-toggle，所以手动来）
+    if (t instanceof Element && t.closest('.xm-shot-opt-t')) {
+      const c = el.querySelector<HTMLInputElement>('.xm-shot-cb');
+      if (c) {
+        c.checked = !c.checked;
+        c.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return;
+    }
     const act = t instanceof Element ? t.closest<HTMLElement>('[data-a]')?.dataset.a : undefined;
     if (!act) {
       if (ev.target === el) closePreview();
@@ -554,20 +757,6 @@ function inkFor(): string {
   return lum > 170 ? '#0b0d10' : '#ffffff';
 }
 
-function showPreview(b: Blob, w: number, h: number, chunks: number): void {
-  ensureOverlay();
-  if (ov) ov.style.setProperty('--xm-shot-ink', inkFor());
-  if (blobUrl) URL.revokeObjectURL(blobUrl);
-  blob = b;
-  blobUrl = URL.createObjectURL(b);
-  if (ovImg) ovImg.src = blobUrl;
-  if (ovSub) {
-    const kb = Math.round(b.size / 1024);
-    ovSub.textContent = `${w} × ${h} px · ${kb} KB${chunks > 1 ? ` · ${chunks} 段拼接` : ''}`;
-  }
-  if (ov) ov.dataset.open = '1';
-}
-
 function closePreview(): void {
   if (ov) ov.dataset.open = '0';
   if (ovImg) ovImg.removeAttribute('src');
@@ -577,6 +766,9 @@ function closePreview(): void {
     setTimeout(() => URL.revokeObjectURL(u), 220);
   }
   blob = null;
+  // 原图可能有好几 MB（长推文），关掉预览就释放；下次截图会重新填
+  rawCanvas = null;
+  bands = [];
 }
 
 function download(): void {

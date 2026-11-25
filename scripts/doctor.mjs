@@ -285,13 +285,12 @@ function judge(samples, route) {
       '开关与画面不一致：要么该藏没藏，要么关了没还回来');
   }
 
-  // 4) 抖动：只比较**后 4 次**采样。前两次常是首屏过渡 —— 例如详情页回复框
+  // 4) 抖动：只比较**后 8 次**采样。前两次常是首屏过渡 —— 例如详情页回复框
   //    先渲染出来、1.5 秒节拍才把它藏掉，那是正常收敛，不是抖动。
-  const flip = (pick) => {
-    const v = samples.slice(2).map(pick).filter((x) => x !== null);
-    if (v.length < 2) return null;
-    return new Set(v).size > 1 ? v.join(' → ') : null;
-  };
+  //    判据不是「有变化」，而是「**出现方向反转**」：首页格子是陆续挂载的，
+  //    数量会 0→0→5→10→10 单调爬升，那是首屏在长出来；真抖动是藏了又露、
+  //    露了又藏，序列必然折返（先增后减 / 先减后增）。
+  const flip = (pick) => detectFlip(samples.slice(2).map(pick).filter((x) => x !== null));
   const flips = [
     ['STB-1', '主栏宽度', flip((s) => s.mainW)],
     ['STB-2', '格子数量', flip((s) => s.cells)],
@@ -300,7 +299,13 @@ function judge(samples, route) {
   ];
   for (const [id, name, v] of flips) {
     if (v === undefined) { add(id, name + '抖动', null, '本页不适用', ''); continue; }
-    add(id, name + '抖动', v === null, v === null ? `后段采样一致` : `来回变：${v}`,
+    if (v === null) { add(id, name + '抖动', null, '样本不足，跳过', ''); continue; }
+    if (!v.changed) { add(id, name + '抖动', true, '后段采样一致'); continue; }
+    if (!v.reversed) {
+      add(id, name + '抖动', true, `后段单调变化：${v.text}（首屏陆续挂载，非抖动）`);
+      continue;
+    }
+    add(id, name + '抖动', false, `来回变：${v.text}`,
       '有东西在周期性地改回来又藏起来，页面会闪');
   }
 
@@ -311,6 +316,48 @@ function judge(samples, route) {
   }
 
   return out;
+}
+
+/**
+ * 抖动判据：**有变化还不够，必须出现方向反转**。
+ * 首页格子是陆续挂载的（0→0→5→10→10），单调爬升属首屏在长出来，不是抖动；
+ * 真抖动是「藏了又露、露了又藏」，序列必然折返（先增后减 / 先减后增）。
+ * 返回 null（样本不足）或 { reversed, changed, text }。
+ */
+function detectFlip(values) {
+  if (values.length < 2) return null;
+  let dir = 0;
+  let reversed = false;
+  for (let i = 1; i < values.length; i++) {
+    const d = Math.sign(Number(values[i]) - Number(values[i - 1]));
+    if (d === 0) continue;
+    if (dir !== 0 && d !== dir) { reversed = true; break; }
+    dir = d;
+  }
+  return { reversed, changed: dir !== 0, text: values.join(' → ') };
+}
+
+/** 离线自检判据本身：XM_DOCTOR_FLIPTEST=1 node scripts/doctor.mjs（不连浏览器） */
+function runFlipTest() {
+  const cases = [
+    { name: '首页格子陆续挂载（旧 STB-2 误报）', v: [0, 0, 5, 10, 10, 10, 10, 10], want: false },
+    { name: '真抖动：露→藏→露', v: [10, 10, 5, 10, 10], want: true },
+    { name: '真抖动：藏→露→藏', v: [0, 0, 3, 0, 3], want: true },
+    { name: '单调下降（收敛中）', v: [10, 10, 10, 6, 6], want: false },
+    { name: '一直一致', v: [10, 10, 10], want: false },
+    { name: '布尔来回（横条/回复框）', v: [false, false, true, false, true], want: true },
+    { name: '样本不足', v: [5], want: null },
+  ];
+  let bad = 0;
+  for (const c of cases) {
+    const r = detectFlip(c.v);
+    const got = r === null ? null : r.reversed;
+    const ok = got === c.want;
+    if (!ok) bad++;
+    console.log(`${ok ? '✓' : '✗'} ${c.name}  ${String(got)}  ${r ? r.text : '样本不足'}`);
+  }
+  console.log(bad ? `\n${bad} 条判据不符` : '\n判据全部符合');
+  process.exit(bad ? 1 : 0);
 }
 
 /* ─────────────────────────── 主流程 ─────────────────────────── */
@@ -325,6 +372,9 @@ async function resolveVersion() {
 }
 
 async function probeRoute(cdp, url) {
+  // 新开的标签页是后台页，Chromium 对后台页的渲染会重度节流（rAF 停摆、采样失真），
+  // 且和主人真实看到的画面不是一回事。先提到前台再导航。
+  try { await cdp.send('Page.bringToFront'); } catch { /* 个别内核不支持，忽略 */ }
   await cdp.send('Page.navigate', { url });
   await waitFor(cdp, `return document.readyState === 'complete'`, TIMEOUT_NAV);
   // 等扩展注入 + 探针写出结论
@@ -373,6 +423,7 @@ function printRoute(label, route, checks) {
 }
 
 async function main() {
+  if (process.env.XM_DOCTOR_FLIPTEST) runFlipTest();
   const started = new Date();
   let browser;
   try {

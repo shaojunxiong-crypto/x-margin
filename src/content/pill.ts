@@ -310,6 +310,36 @@ function climbToOverlay(from: HTMLElement): HTMLElement {
 }
 
 /**
+ * 一个节点能不能被当成「一行提示」藏掉。
+ *
+ * ⛔ 2026-11-26 事故：X 的虚拟列表会**复用容器节点** —— 打过标记的提示条外层，
+ *    之后被拿去装整条时间线（现场：它里面的 ul 行内高 208438px 仍在增长，
+ *    说明 X 正常在填，是我们把它连窝端了），属性还挂在上面，整层就 display:none，
+ *    表现就是「阅读中突然所有推文消失、刷新才好」。
+ *    所以打标前先确认：它既不是内容层，也不含内容层。
+ */
+function toastable(el: HTMLElement): boolean {
+  if (el === document.body || el === document.documentElement) return false;
+  if (el === document.querySelector('main')) return false;
+  // 含推文 / 含虚拟列表格子 / 含列表容器 ⇒ 这是内容层，不是提示条
+  if (el.querySelector('article, [data-testid="cellInnerDiv"], li[data-index], ul')) return false;
+  // 高度已经超过一行提示的体量
+  if (el.scrollHeight > 200) return false;
+  return true;
+}
+
+/**
+ * 每轮自愈：属性一旦落到内容层上，立刻摘掉。
+ * 不节流 —— 正常只有 0~3 个节点，成本是一次 querySelectorAll；
+ * 而这一步正是「永久空白」唯一的兜底，晚一轮就是一帧空白。
+ */
+function healToasts(): void {
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[${TOAST_ATTR}]`))) {
+    if (!toastable(el)) el.removeAttribute(TOAST_ATTR);
+  }
+}
+
+/**
  * 按文案认提示行本体。
  * ⛔ 新版 X 把「显示 N 帖子」渲染成一段**纯文本**：既不是 button，也没有 pillLabel，
  *    只按 testid / role 找必然漏 —— 表现就是提示原样露在时间线顶上（2026-11-22 现场）。
@@ -340,6 +370,8 @@ function findPillText(col: HTMLElement): HTMLElement | null {
 }
 
 function markNativeToast(): void {
+  // 自愈必须在节流之前：属性被带到内容层上时，晚 400ms 就是 400ms 的空白
+  healToasts();
   const now = performance.now();
   // 400ms：标记会随虚拟列表重建而丢失，间隔太长就是肉眼可见的「闪一下又出来」
   if (now - lastToastScan < 400) return;
@@ -355,9 +387,8 @@ function markNativeToast(): void {
     const target = climbToOverlay(label);
     // 安全阀：上溯上来的若是「一块内容」而不是一颗小浮层，宁可不收。
     // 整块 display:none 很容易把主栏内容一起带走，且看不出是谁干的。
-    if (target !== label && (target.getBoundingClientRect().height > 96 || target.querySelector('article'))) {
-      continue;
-    }
+    if (target !== label && target.getBoundingClientRect().height > 96) continue;
+    if (!toastable(target)) continue;
     if (!target.hasAttribute(TOAST_ATTR)) target.setAttribute(TOAST_ATTR, '');
   }
 
@@ -367,9 +398,8 @@ function markNativeToast(): void {
   if (leaf && !leaf.closest(`[${TOAST_ATTR}]`)) {
     const target = climbToOverlay(leaf);
     // 安全阀同 ①：上溯成「一块内容」就不收，宁可留着也不吞主栏
-    if (target === leaf || (target.getBoundingClientRect().height <= 96 && !target.querySelector('article'))) {
-      target.setAttribute(TOAST_ATTR, '');
-    }
+    const tooBig = target !== leaf && target.getBoundingClientRect().height > 96;
+    if (!tooBig && toastable(target)) target.setAttribute(TOAST_ATTR, '');
   }
 
   // ② 发帖后的「已发布」回执：根节点自带 testid，整颗收掉即可，不用上溯
@@ -378,6 +408,7 @@ function markNativeToast(): void {
     const text = (toast.textContent ?? '').replace(/\s+/g, ' ').trim();
     // 回执里可能还带用户名或头像 alt，故不要求整段全等：短 + 含回执词即可
     if (text.length > 60 || !POSTED_RE.test(text) && !/(已发布|已发送|posted|was\s+sent)/i.test(text)) continue;
+    if (!toastable(toast)) continue;
     toast.setAttribute(TOAST_ATTR, '');
   }
 
@@ -390,7 +421,7 @@ function markNativeToast(): void {
     const text = (region.textContent ?? '').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 24 || !POSTED_RE.test(text)) continue;
     const target = climbToOverlay(region);
-    if (!target.hasAttribute(TOAST_ATTR)) target.setAttribute(TOAST_ATTR, '');
+    if (toastable(target) && !target.hasAttribute(TOAST_ATTR)) target.setAttribute(TOAST_ATTR, '');
   }
 }
 

@@ -19,21 +19,52 @@ const BASE_CSS = `
 .xm-bg[data-soft] .xm-bg-scrim{background:var(--xm-scrim,rgba(0,0,0,.3))}
 html.xm-skin,html.xm-skin body{background-color:transparent!important}
 html.xm-skin #react-root{background-color:transparent!important}
-/* 回退换场的幕布（stage.ts 挂 data-on）。半透明 + 3px 模糊，稳定后淡出。
-   ⛔ backdrop-filter 只在 [data-on] 时才有：静止状态挂全屏模糊会常驻一层合成开销。
-   ⛔ 层级压在提示浮条(…482000)之下、面板(…483001)之下：换场时浮条与面板不该被压暗。 */
-.xm-stage{position:fixed;inset:0;z-index:2147481000;pointer-events:none;
-  contain:layout paint;
-  background:rgba(9,10,13,.6);
-  opacity:0;visibility:hidden;
-  transition:opacity .13s ease-out,visibility 0s linear .13s}
-.xm-stage[data-on="1"]{opacity:1;visibility:visible;
-  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
-  /* ⛔ 不能淡入：淡入 130ms 里重建后的头几帧只压暗几个百分点，抖动原样透出来。
-     幕布要「瞬时出现、淡出」。撤下 data-on 时按基础规则的 .13s 过渡走，所以这里写 none 不影响淡出。 */
-  transition:none}
-/* 浅色主题不能压黑：白底忽然变灰比不动更刺眼，改成压白（洗淡） */
-html:not(.xm-dark) .xm-stage{background:rgba(250,250,250,.62)}
+/* 回退换场的遮罩（stage.ts 给 html 挂 xm-stage-on）。
+   ⛔ 不再盖任何有颜色的层：只把推文格子隐身，位置让给 X 自己的骨架与页面底色。
+      以前是全屏 rgba(9,10,13,.6) + blur(3px)，在有壁纸时就是整页一层蓝雾，
+      和 X 的加载态完全不是一个东西（2026-11-26 用户裁定换成 X 那种）。
+   ⛔ 用 visibility 而不是 display：格子仍然占位，高度与滚动位置都不动，揭幕时不会跳。
+   ⛔ 只藏「已经有推文的格子」（:has(article)），骨架格子照常可见 ——
+      骨架是 X 自己的过渡动画，等待期该看到它；真内容到达后才轮到我们遮。 */
+html.xm-stage-on main li[data-index]:has(article),
+html.xm-stage-on main [data-testid="cellInnerDiv"]:has(article){
+  visibility:hidden!important;
+}
+/* 换场骨架（sketch.ts 画的灰块）。
+   ⛔ 位置/尺寸由 JS 按「点击那一刻实测的主栏与格子」写死在根节点上：
+      于是它和刚才那一屏严丝合缝，任何宽度变化都不会错位。
+   ⛔ pointer-events:none + aria-hidden：它只是画，不接收任何事件、不进无障碍树。
+   ⛔ 不能挂 data-index / article：否则我们自己的选择器和 X 都会把它当真的。 */
+/* 舞台底：**不透明**，外加一层薄雾。
+   ⛔ 不能用半透明：半透明会把 X 的重建过程原样透出来，等于没遮。
+   ⛔ 底色由 sketch.ts 从页面计算样式实测后写进 --xm-stage-bg（body → html → 白），
+      不按 html.xm-dark 猜 —— 实测过 xm-dark 在、页面却是浅色，按它选色会整块隐形。 */
+.xm-sketch{position:fixed;z-index:2147480999;pointer-events:none;overflow:hidden;
+  background:var(--xm-stage-bg,#fff);opacity:1;transition:opacity .16s ease-out}
+/* 雾：两层极淡的中性径向渐变叠在纯色底上，让整块底有「磨砂玻璃」的层次，
+   而不是一张死白纸。中灰色（127）在深色底上也不会发白。 */
+.xm-sketch::before{content:'';position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(140% 110% at 50% -25%, rgba(127,127,127,.10), rgba(127,127,127,0) 58%),
+    radial-gradient(110% 85% at 50% 118%, rgba(127,127,127,.08), rgba(127,127,127,0) 62%)}
+.xm-sketch[data-out="1"]{opacity:0}
+/* 骨架块本身再做一次柔化：边缘不锐利，像雾里透出的形状 */
+.xm-sk-item{position:absolute;left:0;right:0;overflow:hidden;border-radius:16px;
+  background:rgba(127,127,127,.10);filter:blur(.5px)}
+.xm-sk-av{position:absolute;left:16px;top:16px;width:40px;height:40px;border-radius:50%;
+  background:rgba(127,127,127,.28)}
+.xm-sk-ln{position:absolute;height:13px;border-radius:4px;background:rgba(127,127,127,.28)}
+.xm-sk-media{position:absolute;left:16px;right:16px;border-radius:14px;background:rgba(127,127,127,.18)}
+.xm-sk-dot{position:absolute;width:14px;height:14px;border-radius:50%;background:rgba(127,127,127,.22)}
+/* ⛔ 色值必须是**中性灰 + 透明度**，不能按主题切换：
+   白底上 28% 的中灰 ≈ #DBDBDB，黑底上 ≈ #242424，两边都看得见。
+   而 html.xm-dark 是扩展自己的判定，和 X 实际配色可能不一致（真机实测过：
+   xm-dark 在、页面却是 light），按它切色会直接画成「白底白块」—— 整个骨架隐形。 */
+/* 呼吸：X 的骨架也在「闪」，不闪的一块灰看着像卡死。
+   ⛔ 只动 opacity（合成层），不动布局；1.6s 一轮，和 X 的节奏接近。 */
+@keyframes xm-sk-pulse{0%,100%{opacity:.62}50%{opacity:1}}
+.xm-sk-av,.xm-sk-ln,.xm-sk-media,.xm-sk-dot{animation:xm-sk-pulse 1.6s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){.xm-sk-av,.xm-sk-ln,.xm-sk-media,.xm-sk-dot{animation:none}}
 `;
 
 /**
@@ -325,6 +356,18 @@ html:not(.xm-dark) .xm-pillbar-in{
   display:none!important;
   height:0!important;min-height:0!important;max-height:0!important;
   margin:0!important;padding:0!important;border:0!important;overflow:hidden!important;
+}
+/* ⛔ 属性只该落在「一行提示」上。X 的虚拟列表会复用容器节点 —— 标记被带到装推文的层上时，
+   整条时间线跟着 display:none（2026-11-26 事故：外层被藏，里面 ul 行内高 208438px 仍在长，
+   页面全空、只能刷新）。这一条是 CSS 级兜底，不依赖 JS 的节拍：
+   只要节点里有内容，隐藏当场作废，任何一帧都不会空白。 */
+[data-xm-toast]:has(article),
+[data-xm-toast]:has([data-testid="cellInnerDiv"]),
+[data-xm-toast]:has(li[data-index]){
+  display:block!important;
+  height:auto!important;max-height:none!important;
+  margin:revert!important;padding:revert!important;
+  overflow:visible!important;
 }
 `;
 

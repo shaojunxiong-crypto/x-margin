@@ -13,6 +13,7 @@ import { applyRail, railItems } from './rail';
 import { column, navRoot } from './sel';
 import { initShot } from './shot';
 import { initStage } from './stage';
+import { initSketchCache } from './sketch';
 import { injectBase } from './styles';
 import { applyTheme, enforceTheme, onSystemThemeChange, reloadForTheme, resolveTheme } from './theme';
 import { applyAccent, applyFont, applySkin, detectTheme, paintBrand, type Theme } from './theming';
@@ -344,6 +345,8 @@ async function boot(): Promise<void> {
   injectBase();
   // 幕布要赶在任何 popstate 之前挂好（也赶在整页回退的首帧之前），所以紧跟样式表
   initStage();
+  // 回退骨架：必须在 pointerdown 那一刻量几何（那时主栏还没被拆），所以尽早挂上
+  initSketchCache();
 
   bg = new BackgroundLayer();
   document.body.prepend(bg.el);

@@ -21,6 +21,34 @@ const flatLines = new Map<HTMLElement, string>();
 /** 抹透过的底板原值 */
 const cardWrappers = new Map<HTMLElement, PrevBg>();
 
+/** 上一轮已经发现「不在文档里」的节点：连着两轮都不在才算真被回收 */
+const detachedOnce = new WeakSet<HTMLElement>();
+let prunedAt = -1e9;
+
+/**
+ * 清掉已经离开文档的节点记录。
+ * ⛔ 这两张是**强引用 Map**，只增不减：X 的虚拟列表每换出一格就留下两条记录，
+ *    一直往下翻的长会话会把整程摸过的节点全部挂在内存里，且这些节点永远回收不掉。
+ * 30 秒一次（滚动中 applyFlat 被冻结，实际更稀）；
+ * 第一次看到某节点断开只记一笔，下一轮还在外面才删 —— X 会摘了又插回来，
+ * 立刻删会把「原值」丢掉，关卡片模式时那层就还原不回去。
+ */
+function pruneCaches(): void {
+  const now = performance.now();
+  if (now - prunedAt < 30_000) return;
+  prunedAt = now;
+  const keys = new Set<HTMLElement>();
+  for (const el of flatLines.keys()) keys.add(el);
+  for (const el of cardWrappers.keys()) keys.add(el);
+  for (const el of keys) {
+    if (el.isConnected) { detachedOnce.delete(el); continue; }
+    if (!detachedOnce.has(el)) { detachedOnce.add(el); continue; }
+    flatLines.delete(el);
+    cardWrappers.delete(el);
+    detachedOnce.delete(el);
+  }
+}
+
 /**
  * ⛔ 这里原本有 seenArt / seenText / seenPhoto / seenSeed 四个 WeakSet，按「子孙节点」做键、
  * 记为「这条已经处理过」。它和「标记打在祖先上」这一事实天然冲突：
@@ -673,6 +701,7 @@ export function clearCardWrappers(on: boolean): void {
  */
 export function applyFlat(on: boolean): void {
   const html = document.documentElement;
+  pruneCaches();
   html.classList.toggle('xm-flat', on);
   if (!on) {
     for (const cls of [FLAT_CELL_CLS, JOINER_CLS, ...THREAD_CLS]) {

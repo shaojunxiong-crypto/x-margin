@@ -1,6 +1,16 @@
 import { build } from 'vite';
 import { wgslVitePlugin } from '@vgpu/wgsl/loader-vite';
-import { cp, rm, mkdir } from 'node:fs/promises';
+import { cp, rm, mkdir, readFile } from 'node:fs/promises';
+
+// 版本号双写（package.json 与 public/manifest.json）：两边不一致时直接失败。
+// ⛔ 以前没人管，装上去的扩展版本和面板页脚显示的版本迟早会对不上，
+//    排查时先怀疑「是不是没重新 build」就白绕一圈。
+const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+const man = JSON.parse(await readFile('public/manifest.json', 'utf8'));
+if (pkg.version !== man.version) {
+  console.error(`✗ 版本号不一致：package.json ${pkg.version} / manifest.json ${man.version}`);
+  process.exit(1);
+}
 
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });

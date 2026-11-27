@@ -11,9 +11,11 @@
  *   ② 线程分组已落定（feed.ts 的 260ms 稳定闸门走完，pendingSig 清空）；
  *   ③ 定位校正已收敛（anchor.ts 最近 500ms 没再跳）。
  *
- * 遮罩本身**不画任何东西**：只给 html 挂 `xm-stage-on`，由样式表把推文格子
- * `visibility:hidden`。等待期看到的是 X 自己的骨架与页面底色，和它的加载态一致；
- * 以前那层全屏半透明 + 3px 模糊在有壁纸时就是一层蓝雾（2026-11-26 用户裁定换掉）。
+ * 遮罩是**不透明的**：给 html 挂 `xm-stage-on` 后，推文格子被隐身，上面再铺一层
+ * 与推文面板同色的底 + 骨架块（版式见 sketch.ts，样式见 styles.ts）。
+ * 为什么必须不透明：回退期 X 会把主栏拆了重建，任何透明度都会让下面半截旧内容透上来，
+ * 读起来像「页面在闪」；以前那版全屏半透明 + 3px 模糊在有壁纸时就是一整层蓝雾
+ * （2026-11-26 用户裁定换掉）。遮罩只覆盖推文流，页头与左右栏不受影响。
  * ⛔ 遮罩必须瞬时生效（class 在同一任务内挂上），不能做淡入：淡入的头几帧抖动会原样透出来。
  * ⛔ 只在「往回走」时 arm：前进（点开推文）不盖，否则每次点推文都空一下。
  */
@@ -24,6 +26,7 @@ import { feedSettled } from './feed';
 import {
   baseSketch,
   detailSketch,
+  hasSketch,
   hideSketch,
   peekSketch,
   recallSketch,
@@ -93,6 +96,36 @@ let waitMove = false;
 let syncTick = 0;
 
 const segs = (p: string): number => p.split('/').filter(Boolean).length;
+
+/** 上一次见到的历史序号（浏览器与 X 的 router 都会写 history.state.idx） */
+let lastIdx: number | null = idxOf();
+
+function idxOf(): number | null {
+  const st = history.state as { idx?: unknown } | null;
+  return st && typeof st.idx === 'number' ? st.idx : null;
+}
+
+/**
+ * 这次路径变化是「往回走」吗？
+ *
+ * 三条判据，任一成立即是：
+ *   ① `history.state.idx` 变小 —— 浏览器/路由自己认的后退，最准；
+ *   ② 路径层数变少 —— 详情页 → 时间线这条主路径；
+ *   ③ 目标路径在骨架缓存里 —— 我们确实是从那一屏点进来的。
+ *
+ * ⛔ 以前只认 ②，同层回退（如 `/user/status/123` → `/user/xyz`）层数相等，
+ *    舞台不挂，回退时就是 500–700ms 的裸重建。
+ * ⛔ ①只在 idx **确实变化**时采信：X 的 router 常常原地 pushState 不动 idx，
+ *    那时 had === cur，不能据此判「不是后退」。
+ */
+function isRetreat(to: string): boolean {
+  const cur = idxOf();
+  const had = lastIdx;
+  lastIdx = cur;
+  if (had != null && cur != null && cur !== had) return cur < had;
+  if (segs(to) < segs(lastPath)) return true;
+  return hasSketch(to);
+}
 
 /**
  * 主栏里是否已经有「真的铺好了」的推文：有实际高度、且和视口有交集。
@@ -339,10 +372,10 @@ export function initStage(): void {
 
   addEventListener('popstate', () => {
     const to = location.pathname;
-    // 只在路径层数变少时盖（详情页 → 时间线）；前进、横向切页不盖
+    // 只在往回走时盖（判据见 isRetreat）；前进、横向切页不盖。
     // popstate 是「回退已经发生」的确定信号：底下那屏详情页注定被替换，
     // 遮住它不会误伤。⛔ 不加 force 就会被 laidOut 判成「已有内容」而不进场 —— 舞台整块消失。
-    if (segs(to) < segs(lastPath)) retreat(to, true);
+    if (isRetreat(to)) retreat(to, true);
     lastPath = to;
   });
 
@@ -410,7 +443,7 @@ export function initStage(): void {
   setInterval(() => {
     const to = location.pathname;
     if (to === lastPath) return;
-    if (segs(to) < segs(lastPath)) retreat(to, true);
+    if (isRetreat(to)) retreat(to, true);
     lastPath = to;
   }, 80);
 

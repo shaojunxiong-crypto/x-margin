@@ -6,7 +6,7 @@ import { applyFlat, clearCardWrappers, markDetailReplyBox, markRelatedBar, reflo
 import { injectFonts } from './fonts';
 import { applyLayout, markComposer, markFloats, syncWidthVar, widenInner } from './layout';
 import { markPageHead } from './pageHead';
-import { killPill } from './pill';
+import { hideNewPostsNotice } from './pill';
 import { createPanel, type PanelApi } from './panel';
 import { publishProbes, runProbes } from './probes';
 import { applyRail, railItems } from './rail';
@@ -16,7 +16,7 @@ import { initStage } from './stage';
 import { initSketchCache } from './sketch';
 import { injectBase } from './styles';
 import { applyTheme, enforceTheme, onSystemThemeChange, reloadForTheme, resolveTheme } from './theme';
-import { applyAccent, applyFont, applySkin, detectTheme, paintBrand, type Theme } from './theming';
+import { applyAccent, applyFont, applySkin, detectTheme, paintBrand, syncPageAccent, type Theme } from './theming';
 
 /** 首次开启图标栏时保留的图标个数（含顶部的 X logo） */
 const RAIL_KEEP = 5;
@@ -84,8 +84,8 @@ function sync(): void {
   applyFlat(true);
   // 二级页页头（通知 / 历史），只在那些路由下动，切走会自动还回去
   markPageHead();
-  // 「显示 N 帖子」提示行：按文案认出来，交给样式表做成顶栏下沿的一条带
-  killPill();
+  // 收掉 X 自己的「有新帖子」提示：只隐藏，不留替代形态
+  hideNewPostsNotice();
   applyRail(s.layout.railNav, theme, s.layout.railHide, s.layout.hideCompose);
   markComposer(s.layout.hideCompose);
   // 详情页回复输入区跟着同一个开关走：改设置当场生效，不用等 1.5 秒心跳
@@ -101,13 +101,26 @@ function sync(): void {
  */
 /** seedRail 是否在跑：tick 每 300ms 会来问一次，不挡住就会并发灌同一份默认值 */
 let seeding = false;
+/**
+ * 一轮 24×500ms 全落空后的冷却。
+ * ⛔ 没有冷却就是无限重试：tick 每 300ms 问一次，每轮跑 12 秒 —— 页面上恒有一个
+ *    12 秒周期的轮询。而且若新版导航项本来就少于 MIN_ITEMS，它永远不会成功。
+ */
+let seedCooldown = 0;
+/** 本页生命周期内最多试几轮；都不成说明结构不是我们认的样子，交给用户手动勾选 */
+const SEED_ATTEMPTS_MAX = 3;
+let seedAttempts = 0;
 
 async function seedRail(): Promise<void> {
   if (seeding) return;
   if (!settings.layout.railNav || settings.layout.railSeedV >= RAIL_SEED_V) return;
+  if (seedAttempts >= SEED_ATTEMPTS_MAX) return;
+  if (performance.now() < seedCooldown) return;
   // 新版没有 header，导航项在 nav[aria-label="主要"] 里 —— 两套都认，否则新版永远不灌默认值
   if (!document.querySelector('header[role="banner"]') && !document.querySelector('nav[aria-label="主要"]')) return;
   seeding = true;
+  seedAttempts += 1;
+  let done = false;
   try {
     // X logo 在 h1 里、不在 nav 内时，nav 侧只需保留 4 项；新版侧栏没有 logo 项，按 5 项算
     const hasHeader = !!document.querySelector('header[role="banner"]');
@@ -131,6 +144,7 @@ async function seedRail(): Promise<void> {
           settings = { ...settings, layout };
           await saveSettings({ layout });
           sync();
+          done = true;
           return;
         }
       } else {
@@ -141,6 +155,8 @@ async function seedRail(): Promise<void> {
     }
   } finally {
     seeding = false;
+    // 这一轮没成：歇 30 秒再说。连歇 3 轮仍不成就不再试（见 SEED_ATTEMPTS_MAX）
+    if (!done) seedCooldown = performance.now() + 30_000;
   }
 }
 
@@ -191,7 +207,7 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
       applyFlat(true);
       // 二级页页头会被 X 重建，跟着补一次（条目留白是 CSS，不在这里管）
       markPageHead();
-      killPill();
+      hideNewPostsNotice();
       if (settings.layout.railNav) applyRail(true, theme, settings.layout.railHide, settings.layout.hideCompose);
       // ⛔ 每轮都要重判：详情页主帖的 article 常晚于面板出现，跳过重判会让误藏的主帖
       // 永久锁在 display:none 里（v0.1.91 修）。
@@ -274,6 +290,9 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
     // X 把品牌色写死在内联样式里，重渲染就会刷回去。挪到主题节拍之外、由
     // paintBrand 自己按 800ms 限频 —— 挂在 1500ms 那层会让蓝色多留半秒。
     paintBrand();
+    // 页面强调色（「发现更多」那块小牌用它）原先只由已停用的提示浮条顺带刷新，
+    // 现在独立采：内部 1.2s 限频，稳态开销可忽略；采不到时 CSS 退回 --xm-acc。
+    syncPageAccent();
     // 主栏身份变化：一次 querySelector，代价可忽略
     if (now - lastWideBind > 300) {
       lastWideBind = now;
@@ -281,7 +300,7 @@ function watch(bindWide: () => void, onUnfreeze: () => void): void {
       bindWide();
       // 提示行的显隐往往只改 display / transform，不产生 childList 变动，
       // 观察器看不到；300ms 一次的这条路是它的兜底。
-      killPill();
+      hideNewPostsNotice();
       // 图标栏同理且更要紧：boot 时 nav 往往还没渲染，applyRail 当场落空就再也没有第二次机会
       // （scan 只跟主栏 childList 走，页面静止后不再触发）。实测表现就是「折叠没发生、
       // 栏里 12 个按钮一个没藏、齿轮留在栏外」（2026-11-24 修）。

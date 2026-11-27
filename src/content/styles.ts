@@ -20,9 +20,10 @@ const BASE_CSS = `
 html.xm-skin,html.xm-skin body{background-color:transparent!important}
 html.xm-skin #react-root{background-color:transparent!important}
 /* 回退换场的遮罩（stage.ts 给 html 挂 xm-stage-on）。
-   ⛔ 不再盖任何有颜色的层：只把推文格子隐身，位置让给 X 自己的骨架与页面底色。
-      以前是全屏 rgba(9,10,13,.6) + blur(3px)，在有壁纸时就是整页一层蓝雾，
-      和 X 的加载态完全不是一个东西（2026-11-26 用户裁定换成 X 那种）。
+   ⛔ 两层配合：这一条把旧推文格子隐身，上面那层 .xm-sketch 再铺**不透明**底 + 骨架块。
+      只隐身不铺底是不够的 —— X 重建时主栏会空一下，透明处能看见下面半截旧内容。
+      以前那版是全屏 rgba(9,10,13,.6) + blur(3px)，在有壁纸时就是整页一层蓝雾
+      （2026-11-26 用户裁定换掉）。
    ⛔ 用 visibility 而不是 display：格子仍然占位，高度与滚动位置都不动，揭幕时不会跳。
    ⛔ 只藏「已经有推文的格子」（:has(article)），骨架格子照常可见 ——
       骨架是 X 自己的过渡动画，等待期该看到它；真内容到达后才轮到我们遮。 */
@@ -252,11 +253,10 @@ html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-threa
 html.xm-card [data-testid="primaryColumn"] [data-testid="cellInnerDiv"].xm-thread-top::before{
   top:var(--xm-ls,0px);
 }
-/* 「显示 N 帖子」提示行：原生那条整条不显示，改由 pill.ts 在 body 上挂一条 fixed 窄带
-   （.xm-pillbar），从顶栏下沿贴出来，点一下把点击转发给原生按钮。
-   为什么不再改原生行的外观：真机页面里还藏着一个 display:none 的
-   [data-testid="pillLabel"]，按 pillLabel 认行会把样式打到隐藏节点上
-   （v0.1.70 就是这样失效的：改造条出现在隐藏节点处，真提示行仍是品牌粉）。
+/* 「显示 N 帖子」提示行：整条收掉，不出现任何替代形态（主人 2026-11-22 定，
+   自建浮条 .xm-pillbar 的机制已删除，见 pill.ts）。
+   ⛔ 这是旧版本留下的清理钩子：早期版本会给原生行打 data-xm-pill，
+     属性还在的节点上一律压成 0 高。新版本不再打标，只负责擦除。
    ⛔ 原生行是绝对定位的 cell（内联 position:absolute + translateY），
      压成 0 高不会推移后面任何一条，只是让它自己和那 36px 占位一起消失。 */
 html.xm-card [data-testid="primaryColumn"] [data-xm-pill]{
@@ -301,49 +301,6 @@ html.xm-card [data-testid="primaryColumn"] [data-xm-more-sec]::after{
   letter-spacing:.2em;text-indent:.2em;
   color:var(--xm-page-acc,var(--xm-acc,#1d9bf0));
   pointer-events:none;
-}
-/* 提示浮块：取 X 自己「已发布」提示的**结构**（实心强调色 + 白字 + 左侧上行箭头 + 光晕）
-   但外形按本项目语言收成直角 —— 全站没有圆角，这里也不许有。
-   它是「有新内容」的邀约，所以做成浮在顶栏下的一小块，而不是压在内容上的横带。
-   ⛔ 强调色取 --xm-page-*（theming.ts 从 X 自己的发帖按钮 / 选中页签下划线采样），
-     不是设置里的 --xm-acc：两者可能撞色（实测页面粉 #f91880、设置紫 #7856ff），
-     浮块贴在页面里，得跟页面走。--xm-acc 只作采不到时的兜底。
-   ⛔ 外壳（.xm-pillbar）只负责定位与承载动画：满主栏宽、无底色、pointer-events:none，
-     真正的块是里面那层 .xm-pillbar-in。这样居中是靠 flex 自动算的，不用在 JS 里量宽度。 */
-.xm-pillbar{
-  position:fixed;z-index:2147482000;left:0;top:0;width:100%;
-  height:56px;box-sizing:border-box;margin:0;padding:0;
-  display:flex;align-items:center;justify-content:center;
-  border:0;background:none;border-radius:0;
-  font-family:var(--xm-font,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif);
-  cursor:pointer;-webkit-user-select:none;user-select:none;
-  pointer-events:none;
-  opacity:0;visibility:hidden;
-  transition:opacity .16s ease,visibility 0s linear .16s;
-}
-.xm-pillbar[data-on="1"]{opacity:1;visibility:visible;transition:opacity .16s ease}
-.xm-pillbar-in{
-  pointer-events:auto;
-  display:inline-flex;align-items:center;gap:9px;
-  height:44px;box-sizing:border-box;padding:0 20px 0 16px;
-  border-radius:0;
-  background-color:var(--xm-page-acc,var(--xm-acc,#1d9bf0));
-  color:#fff;
-  font-size:15px;font-weight:700;line-height:20px;letter-spacing:.01em;
-  box-shadow:0 6px 22px var(--xm-page-glow,var(--xm-page-soft,rgba(29,155,240,.45))),
-             0 2px 10px rgba(0,0,0,.34);
-  transform:translateY(-7px) scale(.97);
-  transition:transform .18s cubic-bezier(.2,.9,.3,1.35);
-}
-.xm-pillbar[data-on="1"] .xm-pillbar-in{transform:none}
-/* 上行箭头：和 X 的「已发布」提示同构，一眼看出是「有新内容、点它刷新」 */
-.xm-pillbar-in::before{
-  content:"↑";font-size:19px;font-weight:800;line-height:1;opacity:.96;margin-top:-1px;
-}
-.xm-pillbar:hover .xm-pillbar-in{filter:brightness(1.06)}
-.xm-pillbar:active .xm-pillbar-in{transform:scale(.975)}
-html:not(.xm-dark) .xm-pillbar-in{
-  box-shadow:0 6px 20px var(--xm-page-soft,rgba(29,155,240,.18)),0 2px 8px rgba(0,0,0,.16);
 }
 /* X 自己的新推提示：主人 2026-11-22 明确「彻底去掉」，页面上不留任何形态。
    两段保障：

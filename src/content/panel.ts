@@ -220,6 +220,13 @@ export function createPanel(opts: PanelOptions): PanelApi {
   root.dataset.rail = '0';
   root.append(style, panel, fab);
 
+  /**
+   * 取色器拖出来的临时色。拖动时即时上色（所见即所得），但用户可能按 Esc / 点面板外面
+   * 直接关掉 —— 那时设置没落盘，页面却留着预览色，和面板里显示的已存值对不上。
+   * 关闭时据此退回设置里的颜色（见 toggle）。
+   */
+  let accentPreview: string | null = null;
+
   function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -356,11 +363,15 @@ export function createPanel(opts: PanelOptions): PanelApi {
       // 取色器拖动时会连续触发 input：先直接上色预览，等松手（change）再落盘重绘
       pick.oninput = () => {
         const hex = cleanHex(pick.value);
+        accentPreview = hex;
         applyAccent(hex);
         root.style.setProperty('--xm-acc', hex);
         dots.querySelectorAll<HTMLElement>('.xm-dot').forEach((d) => delete d.dataset.on);
       };
-      pick.onchange = () => { void opts.update({ accent: cleanHex(pick.value) }).then(render); };
+      pick.onchange = () => {
+        accentPreview = null;
+        void opts.update({ accent: cleanHex(pick.value) }).then(render);
+      };
       dots.append(pick);
       f.box.append(dots);
     }
@@ -562,6 +573,12 @@ export function createPanel(opts: PanelOptions): PanelApi {
     if (open) {
       place(root.dataset.rail === '1');
       render();
+    } else if (accentPreview) {
+      // 预览过但没保存：退回去，别把没落盘的颜色留在页面上
+      accentPreview = null;
+      const saved = opts.settings().accent;
+      applyAccent(saved);
+      root.style.setProperty('--xm-acc', saved);
     }
   }
 

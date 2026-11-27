@@ -10,14 +10,39 @@
  *   ② 请求后台注入主世界脚本（页面每次加载一次）；
  *   ③ 留一条 `play` 事件兜底：万一注入失败（权限被撤、后台没醒），至少还能把画面停住。
  *      DOM 事件跨 world 共享，这条无论如何都生效，代价是会闪一下。
+ *
+ * ⛔ 手势判据与主世界那份**必须一致**：按「这条 video 有没有拿到过用户手势」放行，
+ *    不是「2 秒内有过点击」。只按时间窗会在键盘 Space、暂停后恢复、切码率时误停，
+ *    而这条兜底一旦误停，比拦不住更容易被当成 bug 报上来。
  */
 
-/** 用户刚在视频上点过，这段时间内的起播一律放行 */
+/** 用户刚在视频区动过手，这段时间内的起播一律放行（元素换了人也算） */
 const GESTURE_MS = 2000;
 
 let on = true;
 let gestureAt = -1e9;
+/** 用户动过手的 video：之后它的起播一律放行 */
+const granted = new WeakSet<HTMLVideoElement>();
 let asked = false;
+
+const isGif = (v: HTMLVideoElement): boolean => v.loop === true;
+const recentGesture = (): boolean => performance.now() - gestureAt <= GESTURE_MS;
+
+function grantAll(root: Element): void {
+  if (root instanceof HTMLVideoElement) granted.add(root);
+  for (const v of root.querySelectorAll<HTMLVideoElement>('video')) granted.add(v);
+}
+
+function grantAround(t: EventTarget | null): void {
+  if (!(t instanceof Element)) return;
+  const v = t.closest('video');
+  if (v) granted.add(v as HTMLVideoElement);
+  let el: Element | null = t;
+  for (let i = 0; i < 6 && el; i++) {
+    if (el instanceof HTMLVideoElement || el.querySelector('video')) grantAll(el);
+    el = el.parentElement;
+  }
+}
 
 /**
  * 点在视频区里吗？与主世界那份保持一致：落点在 video 包围盒内即算。
@@ -39,7 +64,13 @@ function inVideoZone(t: EventTarget | null, x: number, y: number): boolean {
   return false;
 }
 
-const isGif = (v: HTMLVideoElement): boolean => v.loop === true;
+function grantAtPointer(t: EventTarget | null, x: number, y: number): void {
+  grantAround(t);
+  for (const v of document.querySelectorAll<HTMLVideoElement>('video')) {
+    const r = v.getBoundingClientRect();
+    if (r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) granted.add(v);
+  }
+}
 
 /** 开关；默认开（用户要的就是「禁止」） */
 export function setNoAutoplay(v: boolean): void {
@@ -78,19 +109,24 @@ export function installNoAutoplay(): void {
     (ev) => {
       const v = ev.target;
       if (!on || !(v instanceof HTMLVideoElement) || isGif(v)) return;
-      if (performance.now() - gestureAt <= GESTURE_MS) return;
+      if (granted.has(v) || recentGesture()) return;
       v.pause();
     },
     true,
   );
 
   // 新插入的 video 摘掉 autoplay（改 DOM 属性跨 world 有效）
+  // 刚点过视频时插入的 player 直接放行（点封面 → 弹层里新建 video 的链路）
   const strip = (n: Element): void => {
     if (n instanceof HTMLVideoElement) {
       n.autoplay = false;
+      if (recentGesture()) granted.add(n);
       return;
     }
-    for (const v of n.querySelectorAll<HTMLVideoElement>('video[autoplay]')) v.autoplay = false;
+    for (const v of n.querySelectorAll<HTMLVideoElement>('video')) {
+      v.autoplay = false;
+      if (recentGesture()) granted.add(v);
+    }
   };
   const mo = new MutationObserver((recs) => {
     if (!on) return;
@@ -103,7 +139,23 @@ export function installNoAutoplay(): void {
   document.addEventListener(
     'pointerdown',
     (e) => {
-      if (on && inVideoZone(e.target, e.clientX, e.clientY)) gestureAt = performance.now();
+      if (!on || !inVideoZone(e.target, e.clientX, e.clientY)) return;
+      gestureAt = performance.now();
+      grantAtPointer(e.target, e.clientX, e.clientY);
+    },
+    true,
+  );
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (!on || (e.key !== ' ' && e.key !== 'Enter' && e.key !== 'k' && e.key !== 'K')) return;
+      const a = document.activeElement;
+      if (!(a instanceof Element)) return;
+      if (!a.closest('video') && !a.querySelector('video') && !a.closest('[data-testid="videoPlayer"],[data-testid="videoComponent"]')) {
+        return;
+      }
+      gestureAt = performance.now();
+      grantAround(a);
     },
     true,
   );

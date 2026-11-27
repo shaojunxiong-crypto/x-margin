@@ -58,8 +58,6 @@ let curKind: SketchKind | null = null;
 /** 路径 → 离开时的几何。回退到某个路径时按它画骨架 */
 const kept = new Map<string, { s: Sketch; at: number }>();
 
-const segs = (p: string): number => p.split('/').filter(Boolean).length;
-
 /** 配图高度。头像 40px、emoji 20px 一律不算 */
 function mediaHeight(cell: HTMLElement): number {
   let best = 0;
@@ -298,7 +296,7 @@ function renderDetail(root: HTMLElement, s: Sketch): void {
   // 正文：从 84 起，行距 24
   const bodyTop = 84;
   const lines = [0.96, 0.99, 0.72];
-  lines.forEach((r, i) => bar(item, pad, bodyTop + i * 24, s.w - pad * 2 - (i === 2 ? 60 : 0) * 0, 14));
+  lines.forEach((r, i) => bar(item, pad, bodyTop + i * 24, s.w - pad * 2 - (i === 2 ? 60 : 0), 14));
 
   // 媒体块：正文下 24px，高度取剩余空间的三分之二，最多 320
   const mediaTop = bodyTop + lines.length * 24 + 20;
@@ -435,4 +433,11 @@ export function initSketchCache(): void {
   );
 }
 
-export { segs };
+/**
+ * 这个路径有没有「离开时的几何」。不消耗缓存 —— stage.ts 用它判断这次是不是往回走
+ * （同层回退：路径层数不变，只有缓存能证明我们是从那一屏点进来的）。
+ */
+export function hasSketch(path: string): boolean {
+  const hit = kept.get(path);
+  return !!hit && Date.now() - hit.at <= KEEP_MS;
+}
